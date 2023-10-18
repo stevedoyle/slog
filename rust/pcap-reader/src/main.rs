@@ -5,9 +5,23 @@ use pnet::packet::{
     ipv4::Ipv4Packet,
     ipv6::Ipv6Packet,
     udp::UdpPacket,
-    Packet,
+    Packet, vxlan::VxlanPacket,
 };
 use std::{fs::File, net::IpAddr};
+
+fn handle_vxlan_packet(packet: &[u8]) {
+    let vxlan = VxlanPacket::new(packet);
+
+    if let Some(vxlan) = vxlan {
+        println!(
+            "VXLAN: Flags: {} VNI: {}",
+            vxlan.get_flags(),
+            vxlan.get_vni()
+        );
+    } else {
+        println!("Malformed VXLAN packet");
+    }
+}
 
 fn handle_udp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) {
     let udp = UdpPacket::new(packet);
@@ -21,6 +35,9 @@ fn handle_udp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) {
             udp.get_destination(),
             udp.get_length()
         );
+        if udp.get_destination() == 4789 { // VXLAN port
+            handle_vxlan_packet(udp.payload());
+        }
     } else {
         println!("Malformed UDP packet");
     }
@@ -131,4 +148,5 @@ fn main() {
     parse_pcap_file("pcap/v6_cleartext.pcap");
     parse_pcap_file("pcap/v4_cleartext_empty.pcap");
     parse_pcap_file("pcap/v6_cleartext_empty.pcap");
+    parse_pcap_file("pcap/vxlan.pcap");
 }

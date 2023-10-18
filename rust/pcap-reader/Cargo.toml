@@ -7,4 +7,6 @@ edition = "2021"
 
 [dependencies]
 pcap-file = "2.0.0"
-pnet = "0.34.0"
+#pnet = "0.34.0"
+pnet = {git = "https://github.com/stevedoyle/libpnet.git", branch = "vxlan"}
+
