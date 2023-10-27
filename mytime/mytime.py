@@ -155,7 +155,7 @@ def get_dates(start, end, thisweek, thismonth, thisyear,
               type=click.Path(exists=True, file_okay=False))
 @click.option('--category', default='Area',
               help="Category of time entries to summarise",
-              type=click.Choice(['Area', 'Type', 'Focus', 'Proj'],
+              type=click.Choice(['Area', 'Focus', 'Proj', 'Prof'],
                                 case_sensitive=False))
 @click.option('--tsv', default=False, is_flag=True,
               help='Format the output as tab separated values')
