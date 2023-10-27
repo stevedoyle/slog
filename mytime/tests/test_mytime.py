@@ -87,7 +87,7 @@ class TestMyTime(unittest.TestCase):
             ('Sample', 2.5, 31.25)],
             columns=['Name', 'Hours', '%'])
         expected_total = 8.0
-        areas, total = getAreaSummary(input)
+        areas, total = getSummary(input, 'Area')
         self.assertEqual(areas.values.tolist(), expected.values.tolist())
         self.assertEqual(total, expected_total)
 

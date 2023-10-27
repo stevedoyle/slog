@@ -31,31 +31,6 @@ def getSummary(df, category):
     areadf['%'] = areadf['Hours'] / total * 100
     return areadf, total
 
-def getAreaSummary(df):
-    return getSummary(df, 'Area')
-
-def getTypeSummary(df):
-    return getSummary(df, 'Type')
-
-def getFocusSummary(df):
-    return getSummary(df, 'Focus')
-
-# def extractAreas(contents):
-#     md = []
-#     pattern = r'Time\.Area\.(.+):\s*(\d+\.?\d?)'
-#     mobj = re.findall(pattern, contents)
-#     for (area, hours) in mobj:
-#         md.append((area, float(hours)))
-#     return md
-
-def extractFocusTime(contents):
-    md = []
-    pattern = r'Time\.Focus\.(.+):\s*(\d+\.?\d?)'
-    mobj = re.findall(pattern, contents)
-    for (focus, hours) in mobj:
-        md.append((focus, float(hours)))
-    return md
-
 def getFilesInRange(fpath, begin, end):
     begindate = dateutil.parser.parse(begin).date()
     enddate = dateutil.parser.parse(end).date()
