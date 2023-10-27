@@ -5,7 +5,6 @@ import os
 import click
 import dateutil
 import logging
-import numpy as np
 import pandas as pd
 import pendulum
 import re
@@ -59,6 +58,9 @@ def gettimedata(files):
             {'Hours': 'float'})
     return df
 
+def getNumFiles(df):
+    return df['File'].nunique()
+
 def printTable(table, tsv):
     tblFmt = 'github'
     if tsv: tblFmt = 'tsv'
@@ -76,10 +78,12 @@ def reportTimeSpent(path, category, begin, end, tsv=False):
         files = getFilesInRange(path, begin, end)
         td = gettimedata(files)
         areas, total_hours = getSummary(td, category)
+        days = getNumFiles(td)
         if total_hours:
             printTable(areas, tsv)
             print()
             print(f'Total hours: {total_hours}')
+            print(f'Average hours/day: {total_hours/days}')
     except ValueError as err:
         print(f'Error parsing date: {err}')
         return
