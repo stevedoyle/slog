@@ -1,0 +1,9 @@
+bin
+include
+lib
+pyvenv.cfg
+__pycache__
+pyvenv.cfg
+.vscode
+.pytest_cache
+*.egg-info
