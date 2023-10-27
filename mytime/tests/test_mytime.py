@@ -28,23 +28,22 @@ class TestMyTime(unittest.TestCase):
             Time.Area.Collab: 0.5
             Time.Area.Collab.Meeting: 3
         """
-        parsed = extractAreas(time_str)
-        self.assertIn(("Managing", 4.5), parsed)
-        self.assertIn(("Sample", 2.5), parsed)
-        self.assertIn(("Test", 1), parsed)
-        self.assertIn(("Collab", 0.5), parsed)
-        self.assertIn(("Collab.Meeting", 3), parsed)
+        parsed = extractTimeData(time_str)
+        self.assertIn(["Area", "Managing", 4.5], parsed)
+        self.assertIn(["Area", "Sample", 2.5], parsed)
+        self.assertIn(["Area", "Test", 1], parsed)
+        self.assertIn(["Area", "Collab", 0.5], parsed)
+        self.assertIn(["Area", "Collab.Meeting", 3], parsed)
 
     def test_area_parsing_failure(self):
-        self.assertEqual(extractAreas(""), [])
-        self.assertEqual(extractAreas("Time.Are.Managing: 4.5"), [])
-        self.assertEqual(extractAreas("Time.Area.Managing: "), [])
+        self.assertEqual(extractTimeData(""), [])
+        self.assertEqual(extractTimeData("Time.Area.Managing: "), [])
 
         time_str = r"""
             Time.Area.Managing: 4.5
             Tim.Area.Sample: 2.5
         """
-        self.assertEqual(extractAreas(time_str), [('Managing', 4.5)])
+        self.assertEqual(extractTimeData(time_str), [['Area', 'Managing', 4.5]])
 
     def test_timedata_parsing(self):
         time_str = r"""

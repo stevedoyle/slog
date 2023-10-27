@@ -23,21 +23,30 @@ def extractTimeData(contents, prefix=''):
             td.append([category, name, float(hours)])
     return td
 
-def getAreaSummary(df):
-    areadf = df.loc[df['Category'] == 'Area'].drop(columns=['Category'])
+def getSummary(df, category):
+    areadf = df.loc[df['Category'] == category].drop(columns=['Category'])
     areadf = areadf.groupby('Name')['Hours'].sum().reset_index()
     areadf = areadf.sort_values(by=['Hours'], ascending=False)
     total = areadf['Hours'].sum()
     areadf['%'] = areadf['Hours'] / total * 100
     return areadf, total
 
-def extractAreas(contents):
-    md = []
-    pattern = r'Time\.Area\.(.+):\s*(\d+\.?\d?)'
-    mobj = re.findall(pattern, contents)
-    for (area, hours) in mobj:
-        md.append((area, float(hours)))
-    return md
+def getAreaSummary(df):
+    return getSummary(df, 'Area')
+
+def getTypeSummary(df):
+    return getSummary(df, 'Type')
+
+def getFocusSummary(df):
+    return getSummary(df, 'Focus')
+
+# def extractAreas(contents):
+#     md = []
+#     pattern = r'Time\.Area\.(.+):\s*(\d+\.?\d?)'
+#     mobj = re.findall(pattern, contents)
+#     for (area, hours) in mobj:
+#         md.append((area, float(hours)))
+#     return md
 
 def extractFocusTime(contents):
     md = []
@@ -75,22 +84,25 @@ def gettimedata(files):
             {'Hours': 'float'})
     return df
 
-def printTable(table):
+def printTable(table, tsv):
+    tblFmt = 'github'
+    if tsv: tblFmt = 'tsv'
+
     print(tabulate(
         table,
         headers='keys',
         showindex=False,
         floatfmt=('', '.1f', '.2f'),
-        tablefmt='github'))
+        tablefmt=tblFmt))
 
-def reportTimeSpent(path, begin, end):
+def reportTimeSpent(path, category, begin, end, tsv=False):
     files = []
     try:
         files = getFilesInRange(path, begin, end)
         td = gettimedata(files)
-        areas, total_hours = getAreaSummary(td)
+        areas, total_hours = getSummary(td, category)
         if total_hours:
-            printTable(areas)
+            printTable(areas, tsv)
             print()
             print(f'Total hours: {total_hours}')
     except ValueError as err:
@@ -161,6 +173,12 @@ def get_dates(start, end, thisweek, thismonth, thisyear,
 @click.option('--path', default='.',
               help='Path to the input files.',
               type=click.Path(exists=True, file_okay=False))
+@click.option('--category', default='Area',
+              help="Category of time entries to summarise",
+              type=click.Choice(['Area', 'Type', 'Focus', 'Proj'],
+                                case_sensitive=False))
+@click.option('--tsv', default=False, is_flag=True,
+              help='Format the output as tab separated values')
 @click.option('--from', 'from_',
               default=pendulum.today(),
               help='Start of time tracking period (default is today).',
@@ -181,6 +199,8 @@ def get_dates(start, end, thisweek, thismonth, thisyear,
 @click.option('--lastyear', default=False, is_flag=True,
               help="Last year's time summary. Overrides --from and --to values.")
 def mytime(log, path,
+           category,
+           tsv,
            from_, to,
            thisweek, thismonth, thisyear,
            lastweek, lastmonth, lastyear):
@@ -199,7 +219,7 @@ def mytime(log, path,
                            lastweek, lastmonth, lastyear)
     logging.info(f'{start} -> {end}')
 
-    reportTimeSpent(path, start, end)
+    reportTimeSpent(path, category.title(), start, end, tsv)
 
 
 ##########################################################################
