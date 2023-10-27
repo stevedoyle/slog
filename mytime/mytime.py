@@ -75,11 +75,6 @@ def gettimedata(files):
             {'Hours': 'float'})
     return df
 
-def getTotals(data):
-    df = pd.DataFrame(data)
-    df.columns=['Category', 'Name', 'Hours']
-    return df.groupby(['Category', 'Name'])['Hours'].sum().reset_index()
-
 def printTable(table):
     print(tabulate(
         table,
@@ -89,16 +84,15 @@ def printTable(table):
         tablefmt='github'))
 
 def reportTimeSpent(path, begin, end):
-    logging.info(f'{begin} -> {end}')
-
     files = []
     try:
         files = getFilesInRange(path, begin, end)
         td = gettimedata(files)
         areas, total_hours = getAreaSummary(td)
-        printTable(areas)
-        print()
-        print(f'Total hours: {total_hours}')
+        if total_hours:
+            printTable(areas)
+            print()
+            print(f'Total hours: {total_hours}')
     except ValueError as err:
         print(f'Error parsing date: {err}')
         return
@@ -141,12 +135,55 @@ def get_dates_lastyear():
     end = lastyear.end_of('year').to_date_string()
     return start, end
 
+def get_dates(start, end, thisweek, thismonth, thisyear,
+              lastweek, lastmonth, lastyear):
+    start = start.strftime("%Y-%m-%d")
+    end = end.strftime("%Y-%m-%d")
+    if thisweek:
+        start, end = get_dates_thisweek()
+    elif thismonth:
+        start, end = get_dates_thismonth()
+    elif thisyear:
+        start, end = get_dates_thisyear()
+    elif lastweek:
+        start, end = get_dates_lastweek()
+    elif lastmonth:
+        start, end = get_dates_lastmonth()
+    elif lastyear:
+        start, end = get_dates_lastyear()
+    return start, end
+
 ##########################################################################
 
-@click.group()
+@click.command()
 @click.option('--log', default='warning',
               help='Logging level (info, debug)')
-def mytime(log):
+@click.option('--path', default='.',
+              help='Path to the input files.',
+              type=click.Path(exists=True, file_okay=False))
+@click.option('--from', 'from_',
+              default=pendulum.today(),
+              help='Start of time tracking period (default is today).',
+              type=click.DateTime())
+@click.option('--to', default=pendulum.today(),
+              help='End of time tracking period (default is today).',
+              type=click.DateTime())
+@click.option('--thisweek', default=False, is_flag=True,
+              help="This week's time summary. Overrides --from and --to values.")
+@click.option('--thismonth', default=False, is_flag=True,
+              help="This month's time summary. Overrides --from and --to values.")
+@click.option('--thisyear', default=False, is_flag=True,
+              help="This year's time summary. Overrides --from and --to values.")
+@click.option('--lastweek', default=False, is_flag=True,
+              help="Last week's time summary. Overrides --from and --to values.")
+@click.option('--lastmonth', default=False, is_flag=True,
+              help="Last month's time summary. Overrides --from and --to values.")
+@click.option('--lastyear', default=False, is_flag=True,
+              help="Last year's time summary. Overrides --from and --to values.")
+def mytime(log, path,
+           from_, to,
+           thisweek, thismonth, thisyear,
+           lastweek, lastmonth, lastyear):
     """Summarize time tracking data."""
     # Logging setup
     numeric_level = getattr(logging, log.upper(), None)
@@ -157,50 +194,12 @@ def mytime(log):
     # Tune pandas settings
     pd.set_option('display.precision', 2)
 
-@mytime.command()
-def thisweek():
-    """This week's time summary."""
-    start, end = get_dates_thisweek()
+    start, end = get_dates(from_, to,
+                           thisweek, thismonth, thisyear,
+                           lastweek, lastmonth, lastyear)
     logging.info(f'{start} -> {end}')
-    reportTimeSpent(start, end)
 
-@mytime.command()
-def lastweek():
-    """Last week's time summary."""
-    start, end = get_dates_lastweek()
-    logging.info(f'{start} -> {end}')
-    reportTimeSpent(start, end)
-
-@mytime.command()
-@click.option('--path', default='.',
-              help='Path to the input files.')
-def thismonth(path):
-    """This month's time summary."""
-    start, end = get_dates_thismonth()
-    logging.info(f'{start} -> {end}')
     reportTimeSpent(path, start, end)
-
-@mytime.command()
-def lastmonth():
-    """Last month's time summary."""
-    start, end = get_dates_lastmonth()
-    logging.info(f'{start} -> {end}')
-    reportTimeSpent(start, end)
-
-@mytime.command()
-def thisyear():
-    """This year's time summary."""
-    start, end = get_dates_thisyear()
-    logging.info(f'{start} -> {end}')
-    reportTimeSpent(start, end)
-
-
-@mytime.command()
-def lastyear():
-    """Last year's time summary."""
-    start, end = get_dates_lastyear()
-    logging.info(f'{start} -> {end}')
-    reportTimeSpent(start, end)
 
 
 ##########################################################################

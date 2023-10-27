@@ -76,21 +76,6 @@ class TestMyTime(unittest.TestCase):
         self.assertIn(["Prefix", "Area", "Collab", 0.5], parsed)
         self.assertIn(["Prefix", "Area", "Collab.Meeting", 3], parsed)
 
-    def test_timedata_total(self):
-        time_data = [
-            ('Proj', 'Test', 2.5),
-            ('Proj', 'Test', 1),
-            ('Proj', 'Sample', 1),
-        ]
-        expected = pd.DataFrame([
-            ('Proj', 'Test', 3.5),
-            ('Proj', 'Sample', 1)],
-            columns=['Category', 'Name', 'Hours'])
-        expected = expected.sort_values(by=['Hours'])
-        totals = getTotals(time_data)
-        self.assertEqual(len(totals), 2)
-        self.assertTrue(np.array_equal(totals.values, expected.values))
-
     def test_getAreaSummary(self):
         input = pd.DataFrame([
             ('Area', 'Managing', 3.5),
