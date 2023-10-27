@@ -147,6 +147,7 @@ def get_dates(start, end, thisweek, thismonth, thisyear,
 ##########################################################################
 
 @click.command()
+@click.version_option(version="0.1.0")
 @click.option('--log', default='warning',
               help='Logging level (info, debug)')
 @click.option('--path', default='.',
