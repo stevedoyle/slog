@@ -1,26 +1,18 @@
-use std::fmt;
+use thiserror::Error;
 
 /// An exercise in creating a custom error type that can be used with Result<>.
 
 type Result<T> = std::result::Result<T, MyError>;
 
-#[derive(Debug, PartialEq, Clone)]
+// Using thiserror::Error to avoid having to implement the Display trait for my
+// custom error.
+#[derive(Error, Debug, PartialEq, Clone)]
 enum MyError {
+    #[error("Bad length")]
     BadLength,
-    AuthenticationFailed,
-}
 
-impl fmt::Display for MyError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            MyError::BadLength => {
-                write!(f, "Bad Length")
-            }
-            MyError::AuthenticationFailed => {
-                write!(f, "Authenticaion Failed")
-            }
-        }
-    }
+    #[error("Authentication failed")]
+    AuthenticationFailed,
 }
 
 #[allow(dead_code)]
