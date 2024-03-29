@@ -1,0 +1,9 @@
+people:
+- name: Ford Prefect
+  age: 23
+  siblings: None
+- name: Enid Blyton
+  age: 28
+  siblings:
+  - Peter
+  - Jane
