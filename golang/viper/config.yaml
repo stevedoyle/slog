@@ -1,0 +1,14 @@
+verbose: true
+loglevel: INFO
+
+networks:
+  blue:
+    interfaces:
+      xfrm10:
+        id: 10
+        type: ipip_tunnel
+  pink:
+    interfaces:
+      xfrm20:
+        id: 20
+        type: ipip_tunnel
