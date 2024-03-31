@@ -9,5 +9,6 @@ edition = "2021"
 anyhow = "1.0.79"
 byteorder = "1.5.0"
 clap = { version = "4.4.16", features = ["derive"] }
+deku = "0.16.0"
 pretty-hex = "0.4.1"
 thiserror = "1.0.56"

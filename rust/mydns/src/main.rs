@@ -1,6 +1,7 @@
 use anyhow::Result;
 use byteorder::{BigEndian, ReadBytesExt};
 use clap::Parser;
+use deku::{DekuContainerRead, DekuContainerWrite, DekuRead, DekuUpdate, DekuWrite};
 use pretty_hex::PrettyHex;
 use std::{
     fmt,
@@ -10,7 +11,8 @@ use std::{
 };
 use thiserror::Error;
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 struct DnsHeader {
     id: u16,
     flags: u16,
@@ -30,25 +32,8 @@ impl fmt::Display for DnsHeader {
     }
 }
 
-impl DnsHeader {
-    fn parse(buf: &[u8]) -> Result<(Self, usize)> {
-        let mut hdr = DnsHeader::default();
-        if buf.len() < size_of::<DnsHeader>() {
-            return Err(ParseError::InvalidHeader.into());
-        }
-        let mut pos = buf;
-        hdr.id = pos.read_u16::<BigEndian>()?;
-        hdr.flags = pos.read_u16::<BigEndian>()?;
-        hdr.qdcount = pos.read_u16::<BigEndian>()?;
-        hdr.ancount = pos.read_u16::<BigEndian>()?;
-        hdr.nscount = pos.read_u16::<BigEndian>()?;
-        hdr.arcount = pos.read_u16::<BigEndian>()?;
-
-        Ok((hdr, size_of::<DnsHeader>()))
-    }
-}
-
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 struct DnsQuestion {
     name: String,
     qtype: u16,
@@ -115,12 +100,11 @@ fn run_server(addr: &str) -> Result<()> {
 }
 
 fn handle_dns_request(req: &[u8], src: SocketAddr, sock: &UdpSocket) -> Result<()> {
-    let (dnshdr, size) = DnsHeader::parse(&req)?;
+    // let (dnshdr, size) = DnsHeader::parse(&req)?;
+    let (rest, dnshdr) = DnsHeader::from_bytes((req, 0))?;
     println!("Header - {dnshdr}");
-    let mut offset = size;
     for _ in 0..dnshdr.qdcount {
-        let (qd, size) = DnsQuestion::parse(&req[offset..]);
-        offset += size;
+        let (qd, size) = DnsQuestion::parse(rest.0);
         println!("Question - {qd}")
     }
 
@@ -183,9 +167,8 @@ mod tests {
             arcount: 1,
         };
 
-        let (dnshdr, size) = DnsHeader::parse(&dns).unwrap();
+        let (_, dnshdr) = DnsHeader::from_bytes((&dns, 0)).unwrap();
         assert_eq!(dnshdr, expected);
-        assert_eq!(size, dns.len());
     }
 
     #[test]
