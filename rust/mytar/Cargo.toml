@@ -1,0 +1,8 @@
+[package]
+name = "mytar"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+binread = "2.2.0"
+clap = { version = "4.5.3", features = ["derive"] }
