@@ -4,8 +4,7 @@
 /// Blank lines are also tolerated.
 pub fn splitter(text: &str) -> Vec<String> {
     text.lines()
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| line.trim().split_once(':'))
+        .filter_map(|line| line.split_once(':'))
         .map(|(_, tbl_name)| tbl_name.trim().to_string())
         .collect()
 }
