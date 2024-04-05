@@ -1,7 +1,7 @@
 /// An example of using iterators to process text lines.
 /// Input text format: multiple lines, each of the format:
 /// text: text
-/// Blank lines are also tolerated.
+/// Blank lines and extra whitespace is also tolerated.
 pub fn splitter(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|line| line.split_once(':'))
