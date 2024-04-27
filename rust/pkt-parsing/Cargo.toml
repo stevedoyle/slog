@@ -1,11 +1,10 @@
 [package]
-name = "pcap-reader"
+name = "pkt-parsing"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+etherparse = "0.13.0"
 pcap-file = "2.0.0"
-#pnet = "0.34.0"
-pnet = {git = "https://github.com/stevedoyle/libpnet.git", branch = "vxlan"}

@@ -4,19 +4,23 @@ import numpy as np
 from pathlib import Path
 from mytime import *
 
-class TestMyTime(unittest.TestCase):
 
+class TestMyTime(unittest.TestCase):
     def test_get_dates_thisweek(self):
         start, end = get_dates_thisweek()
-        expected_start = pendulum.today().start_of('week').to_date_string()
-        expected_end = pendulum.today().end_of('week').to_date_string()
+        expected_start = pendulum.today().start_of("week").to_date_string()
+        expected_end = pendulum.today().end_of("week").to_date_string()
         self.assertEqual(start, expected_start, "Incorrect start date")
         self.assertEqual(end, expected_end, "Incorrect end date")
 
     def test_get_dates_lastweek(self):
         start, end = get_dates_lastweek()
-        expected_start = pendulum.today().subtract(weeks=1).start_of('week').to_date_string()
-        expected_end = pendulum.today().subtract(weeks=1).end_of('week').to_date_string()
+        expected_start = (
+            pendulum.today().subtract(weeks=1).start_of("week").to_date_string()
+        )
+        expected_end = (
+            pendulum.today().subtract(weeks=1).end_of("week").to_date_string()
+        )
         self.assertEqual(start, expected_start, "Incorrect start date")
         self.assertEqual(end, expected_end, "Incorrect end date")
 
@@ -43,7 +47,7 @@ class TestMyTime(unittest.TestCase):
             Time.Area.Managing: 4.5
             Tim.Area.Sample: 2.5
         """
-        self.assertEqual(extractTimeData(time_str), [['Area', 'Managing', 4.5]])
+        self.assertEqual(extractTimeData(time_str), [["Area", "Managing", 4.5]])
 
     def test_timedata_parsing(self):
         time_str = r"""
@@ -68,7 +72,7 @@ class TestMyTime(unittest.TestCase):
             Time.Area.Collab: 0.5
             Time.Area.Collab.Meeting: 3
         """
-        parsed = extractTimeData(time_str, prefix='Prefix')
+        parsed = extractTimeData(time_str, prefix="Prefix")
         self.assertIn(["Prefix", "Overhead", "Managing", 4.5], parsed)
         self.assertIn(["Prefix", "Proj", "Sample", 2.5], parsed)
         self.assertIn(["Prefix", "Proj", "Test", 1], parsed)
@@ -76,18 +80,21 @@ class TestMyTime(unittest.TestCase):
         self.assertIn(["Prefix", "Area", "Collab.Meeting", 3], parsed)
 
     def test_getAreaSummary(self):
-        input = pd.DataFrame([
-            ('Area', 'Managing', 3.5),
-            ('Area', 'Sample', 1),
-            ('Area', 'Sample', 1.5),
-            ('Area', 'Managing', 2)],
-            columns=['Category', 'Name', 'Hours'])
-        expected = pd.DataFrame([
-            ('Managing', 5.5, 68.75),
-            ('Sample', 2.5, 31.25)],
-            columns=['Name', 'Hours', '%'])
+        input = pd.DataFrame(
+            [
+                ("Area", "Managing", 3.5),
+                ("Area", "Sample", 1),
+                ("Area", "Sample", 1.5),
+                ("Area", "Managing", 2),
+            ],
+            columns=["Category", "Name", "Hours"],
+        )
+        expected = pd.DataFrame(
+            [("Managing", 5.5, 68.75), ("Sample", 2.5, 31.25)],
+            columns=["Name", "Hours", "%"],
+        )
         expected_total = 8.0
-        areas, total = getSummary(input, 'Area')
+        areas, total = getSummary(input, "Area")
         self.assertEqual(areas.values.tolist(), expected.values.tolist())
         self.assertEqual(total, expected_total)
 
@@ -98,19 +105,20 @@ class TestMyTime(unittest.TestCase):
             Time.Area.Collab.Email: 2
             Time.Area.DeepWork: 4"""
         expected = [
-            ['2023-10-16', 'Area', 'Managing', 1.0],
-            ['2023-10-16', 'Area', 'Collab.Meetings', 3.0],
-            ['2023-10-16', 'Area', 'Collab.Email', 2.0],
-            ['2023-10-16', 'Area', 'DeepWork', 4.0]]
+            ["2023-10-16", "Area", "Managing", 1.0],
+            ["2023-10-16", "Area", "Collab.Meetings", 3.0],
+            ["2023-10-16", "Area", "Collab.Email", 2.0],
+            ["2023-10-16", "Area", "DeepWork", 4.0],
+        ]
 
-        with patch('builtins.open', new=mock_open(read_data=mock_content)) as mock_file:
-            fname = './2023-10-16.md'
+        with patch("builtins.open", new=mock_open(read_data=mock_content)) as mock_file:
+            fname = "./2023-10-16.md"
             td = gettimedata([fname])
-            mock_file.assert_called_with("./2023-10-16.md", encoding='UTF-8')
+            mock_file.assert_called_with("./2023-10-16.md", encoding="UTF-8")
             self.assertEqual(len(td), 4)
             self.assertEqual(td.values.tolist(), expected)
 
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("builtins.open", new_callable=mock_open)
     def test_gettimedata_multifile(self, mo):
         mock_f1 = """
             Time.Area.Managing: 1
@@ -123,23 +131,27 @@ class TestMyTime(unittest.TestCase):
             Time.Area.Collab.Email: 1.5
             Time.Area.DeepWork: 3"""
         expected = [
-            ['2023-10-16', 'Area', 'Managing', 1.0],
-            ['2023-10-16', 'Area', 'Collab.Meetings', 3.0],
-            ['2023-10-16', 'Area', 'Collab.Email', 2.0],
-            ['2023-10-16', 'Area', 'DeepWork', 4.0],
-            ['2023-10-17', 'Area', 'Managing', 2.0],
-            ['2023-10-17', 'Area', 'Collab.Meetings', 2.5],
-            ['2023-10-17', 'Area', 'Collab.Email', 1.5],
-            ['2023-10-17', 'Area', 'DeepWork', 3]]
+            ["2023-10-16", "Area", "Managing", 1.0],
+            ["2023-10-16", "Area", "Collab.Meetings", 3.0],
+            ["2023-10-16", "Area", "Collab.Email", 2.0],
+            ["2023-10-16", "Area", "DeepWork", 4.0],
+            ["2023-10-17", "Area", "Managing", 2.0],
+            ["2023-10-17", "Area", "Collab.Meetings", 2.5],
+            ["2023-10-17", "Area", "Collab.Email", 1.5],
+            ["2023-10-17", "Area", "DeepWork", 3],
+        ]
 
-        f1name = '2023-10-16.md'
-        f2name = '2023-10-17.md'
-        handlers = (mock_open(read_data=mock_f1).return_value,
-                    mock_open(read_data=mock_f2).return_value)
+        f1name = "2023-10-16.md"
+        f2name = "2023-10-17.md"
+        handlers = (
+            mock_open(read_data=mock_f1).return_value,
+            mock_open(read_data=mock_f2).return_value,
+        )
         mo.side_effect = handlers
         td = gettimedata([f1name, f2name])
         self.assertEqual(len(td), 8)
         self.assertEqual(td.values.tolist(), expected)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
