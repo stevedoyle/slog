@@ -7,3 +7,7 @@ Some experiments and code hacks for using Rust newtypes and bitfield crates for 
 Network packet processing including pcap file processing.
 
 - [pcap-reader](./pcap-reader/)
+
+SHAKE XOF experiment to check on usage of squeeze functions.
+
+- [shake-xof](./shake-xof/)
