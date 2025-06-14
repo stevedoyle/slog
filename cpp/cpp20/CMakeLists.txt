@@ -39,3 +39,6 @@ add_test(NAME cpp20_span_test COMMAND cpp20_span)
 
 add_executable(cpp20_bit cpp20_bit.cpp)
 add_test(NAME cpp20_bit_test COMMAND cpp20_bit)
+
+add_executable(cpp20_coroutine cpp20_coroutine.cpp)
+add_test(NAME cpp20_coroutine_test COMMAND cpp20_coroutine)
