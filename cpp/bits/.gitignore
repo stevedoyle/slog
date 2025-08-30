@@ -1,0 +1,71 @@
+# Build directories
+build/
+_build/
+cmake-build-*/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+_deps/
+
+# Compiled object files
+*.o
+*.obj
+*.lo
+*.slo
+
+# Compiled libraries
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+*_test
+*_benchmark
+maxbits_test
+maxbits_benchmark
+
+# Debug and profiling files
+*.dSYM/
+*.pdb
+*.ilk
+
+# IDE and editor files
+.vscode/
+.vs/
+*.user
+*.vcproj
+*.vcxproj
+*.sln
+*.suo
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Google Test/Benchmark downloaded dependencies
+_deps/
+googletest-*
+googlebenchmark-*
