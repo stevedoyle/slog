@@ -1,0 +1,25 @@
+# Compiled eBPF objects
+*.bpf.o
+
+# Compiled binaries
+perf_sample
+
+# Build artifacts
+*.o
+*.a
+*.so
+
+# Debug files
+*.dwarf
+*.vmlinux.h
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
