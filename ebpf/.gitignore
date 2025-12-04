@@ -1,0 +1,13 @@
+# Build directory
+build/
+
+# BPF artifacts
+*.bpf.o
+*.skel.h
+
+# Executables
+exec
+exec.o
+
+# vmlinux.h (generated from kernel)
+vmlinux.h
