@@ -1,5 +1,6 @@
 // loader_domain.c
 #include <stdio.h>
+#include <string.h>
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 #include <linux/types.h>
@@ -18,20 +19,24 @@ struct map_event {
 static int handle_event(void *ctx, void *data, size_t len)
 {
     struct map_event *e = data;
-    printf("%s: pid=%d comm=%s domain=0x%llx iova=0x%llx->0x%llx paddr=0x%llx size=0x%llx prot=0x%x\n",
+    printf("%s: pid=%d comm=%s domain=0x%llx iova=0x%llx paddr=0x%llx size=0x%llx prot=0x%x\n",
            e->is_map ? "MAP  " : "UNMAP",
-           e->pid, e->comm, e->domain_ptr,
-           e->iova, e->iova + e->size, e->paddr, e->size, e->prot);
+           e->pid, e->comm, e->domain_ptr, e->iova, e->paddr, e->size, e->prot);
     return 0;
 }
 
-int main()
+int main(int argc, char **argv)
 {
+    const char *target_name = "cpa_sample_code";
     struct bpf_object *obj;
     struct bpf_program *prog;
     struct bpf_link *link_map = NULL;
     struct bpf_link *link_unmap = NULL;
     int err;
+
+    // Allow override from command line
+    if (argc > 1)
+        target_name = argv[1];
 
     obj = bpf_object__open_file("iommu_domain_mmap.bpf.o", NULL);
     if (!obj) {
@@ -44,6 +49,24 @@ int main()
         fprintf(stderr, "Failed to load BPF object: %d\n", err);
         return 1;
     }
+
+    // Set target process name in the config map
+    int map_fd = bpf_object__find_map_fd_by_name(obj, "target_comm");
+    if (map_fd < 0) {
+        fprintf(stderr, "Failed to find target_comm map\n");
+        return 1;
+    }
+
+    __u32 key = 0;
+    char comm[16] = {0};
+    strncpy(comm, target_name, sizeof(comm) - 1);
+
+    if (bpf_map_update_elem(map_fd, &key, comm, BPF_ANY)) {
+        fprintf(stderr, "Failed to update target_comm map\n");
+        return 1;
+    }
+
+    printf("Filtering for process: %s\n", comm);
 
     // Attach iommu_map probe
     prog = bpf_object__find_program_by_name(obj, "trace_iommu_map");

@@ -5,7 +5,7 @@
 
 struct map_event {
     __u32 pid;
-    __u64 domain_ptr;      // iommu_domain pointer
+    __u64 domain_ptr;
     __u64 iova;
     __u64 paddr;
     __u64 size;
@@ -19,16 +19,44 @@ struct {
     __uint(max_entries, 256 * 1024);
 } events SEC(".maps");
 
-// Trace iommu_map - the actual domain mapping function
+// Config map to pass target process name from userspace
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, char[16]);
+} target_comm SEC(".maps");
+
+static inline int is_target_process(void)
+{
+    char comm[16];
+    bpf_get_current_comm(&comm, sizeof(comm));
+    
+    __u32 key = 0;
+    char *target = bpf_map_lookup_elem(&target_comm, &key);
+    if (!target)
+        return 0;  // No filter set, capture nothing
+    
+    // Compare comm with target
+    for (int i = 0; i < 16; i++) {
+        if (target[i] == '\0')
+            return 1;  // Matched up to null terminator
+        if (comm[i] != target[i])
+            return 0;
+    }
+    return 1;
+}
+
 SEC("kprobe/iommu_map")
 int trace_iommu_map(struct pt_regs *ctx)
 {
+    if (!is_target_process())
+        return 0;
+    
     struct map_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
         return 0;
     
-    // iommu_map(struct iommu_domain *domain, unsigned long iova,
-    //           phys_addr_t paddr, size_t size, int prot, gfp_t gfp)
     void *domain = (void *)PT_REGS_PARM1(ctx);
     unsigned long iova = (unsigned long)PT_REGS_PARM2(ctx);
     unsigned long paddr = (unsigned long)PT_REGS_PARM3(ctx);
@@ -48,15 +76,16 @@ int trace_iommu_map(struct pt_regs *ctx)
     return 0;
 }
 
-// Trace iommu_unmap
 SEC("kprobe/iommu_unmap")
 int trace_iommu_unmap(struct pt_regs *ctx)
 {
+    if (!is_target_process())
+        return 0;
+    
     struct map_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
         return 0;
     
-    // iommu_unmap(struct iommu_domain *domain, unsigned long iova, size_t size)
     void *domain = (void *)PT_REGS_PARM1(ctx);
     unsigned long iova = (unsigned long)PT_REGS_PARM2(ctx);
     unsigned long size = (unsigned long)PT_REGS_PARM3(ctx);
