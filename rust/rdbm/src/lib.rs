@@ -8,7 +8,7 @@ pub mod hashtable;
 mod pager;
 pub mod reorganise;
 
-pub use db::{CreateOptions, Database, Stats};
+pub use db::{CreateOptions, Database, OpenOptions, Stats};
 pub use error::{Error, Result};
 pub use hashtable::HashTable;
-pub use reorganise::reorganise;
+pub use reorganise::{reorganise, reorganise_with};

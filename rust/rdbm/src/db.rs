@@ -11,12 +11,16 @@
 //! cannot help: the bucket is already at the maximum depth, or every record
 //! in it has the same hash.
 //!
+//! Every handle holds an `flock` lock on the file for as long as it is open:
+//! shared for a read-only handle, exclusive for a writable one. Locks are
+//! advisory; they keep rdbm handles apart, not other programs.
+//!
 //! See [`crate::format`] for the byte layout.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, TryLockError};
 use std::io;
 use std::mem;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
 use crate::error::{Error, Result};
@@ -40,6 +44,17 @@ impl Default for CreateOptions {
             max_depth: format::DEFAULT_MAX_DEPTH,
         }
     }
+}
+
+/// How [`Database::open_with`] opens an existing database.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OpenOptions {
+    /// Open for reading only, under a shared lock that other readers can
+    /// also hold. Otherwise open for writing, under an exclusive lock.
+    pub read_only: bool,
+    /// When another handle holds a conflicting lock, wait for it to be
+    /// released instead of failing with [`Error::Locked`].
+    pub wait: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,7 +115,8 @@ fn corrupt<T>(msg: impl Into<String>) -> Result<T> {
 }
 
 impl Database {
-    /// Creates a new database file. Fails if `path` already exists.
+    /// Creates a new database file. Fails if `path` already exists. The new
+    /// handle holds an exclusive lock, as [`Database::open`] does.
     pub fn create(path: impl AsRef<Path>, options: CreateOptions) -> Result<Self> {
         Self::create_with_mode(path, options, 0o666)
     }
@@ -115,12 +131,15 @@ impl Database {
         format::check_page_size(options.page_size)?;
         format::check_max_depth(options.max_depth)?;
         let path = path.as_ref();
-        let file = OpenOptions::new()
+        let file = fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
             .mode(mode)
             .open(path)?;
+        // Anyone else who opened the new file finds it empty and lets go of
+        // it at once, so waiting here is brief.
+        file.lock()?;
         Self::initialize(file, options).inspect_err(|_| {
             // Don't leave a half-written file behind.
             let _ = fs::remove_file(path);
@@ -160,20 +179,43 @@ impl Database {
         Ok(db)
     }
 
-    /// Opens an existing database for reading and writing.
+    /// Opens an existing database for reading and writing, under an
+    /// exclusive lock. Fails with [`Error::Locked`] if any other handle has
+    /// the file open.
     ///
     /// Refuses a file with bytes past the header's last page, which an
     /// interrupted write leaves behind: run [`Database::check`] on it first.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_file(OpenOptions::new().read(true).write(true).open(path)?, true)
+        Self::open_with(path, OpenOptions::default())
     }
 
-    /// Opens an existing database for reading only. Mutations will fail.
+    /// Opens an existing database for reading only, under a shared lock.
+    /// Mutations will fail. Fails with [`Error::Locked`] if a writable
+    /// handle has the file open.
     ///
     /// Accepts bytes past the header's last page, so that a file damaged by
     /// an interrupted write can still be checked, read, and reorganised.
     pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_file(File::open(path)?, false)
+        Self::open_with(
+            path,
+            OpenOptions {
+                read_only: true,
+                ..OpenOptions::default()
+            },
+        )
+    }
+
+    /// Opens an existing database as `options` describe.
+    pub fn open_with(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self> {
+        let writable = !options.read_only;
+        let file = open_locked(path.as_ref(), writable, writable, options.wait)?;
+        Self::open_file(file, writable)
+    }
+
+    /// Opens a database for reading only, but under an exclusive lock, so
+    /// that no other handle can use it until this one is dropped.
+    pub(crate) fn open_read_only_exclusive(path: &Path, wait: bool) -> Result<Self> {
+        Self::open_file(open_locked(path, false, true, wait)?, false)
     }
 
     fn open_file(file: File, writable: bool) -> Result<Self> {
@@ -771,6 +813,38 @@ impl Database {
             self.pager.sync()?;
         }
         Ok(())
+    }
+}
+
+/// Opens `path` and locks it, exclusively or shared, waiting for the lock
+/// or failing with [`Error::Locked`] if another handle holds a conflicting
+/// one.
+///
+/// A reorganise renames a new file over `path` while holding the old file's
+/// lock. A handle that opened the old file and then waited would end up
+/// locking a file no longer at `path`, and its writes would be lost, so the
+/// lock is taken again on whatever `path` names after that.
+fn open_locked(path: &Path, writable: bool, exclusive: bool, wait: bool) -> Result<File> {
+    loop {
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(writable)
+            .open(path)?;
+        let locked = match (exclusive, wait) {
+            (true, true) => file.lock().map_err(TryLockError::Error),
+            (false, true) => file.lock_shared().map_err(TryLockError::Error),
+            (true, false) => file.try_lock(),
+            (false, false) => file.try_lock_shared(),
+        };
+        match locked {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Err(Error::Locked),
+            Err(TryLockError::Error(e)) => return Err(e.into()),
+        }
+        let (held, current) = (file.metadata()?, fs::metadata(path)?);
+        if (held.dev(), held.ino()) == (current.dev(), current.ino()) {
+            return Ok(file);
+        }
     }
 }
 
