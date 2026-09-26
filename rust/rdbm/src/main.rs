@@ -3,6 +3,8 @@
 //! Each invocation performs one operation and exits, so it composes with
 //! shell pipelines and scripts. Results go to stdout, diagnostics to stderr.
 //!
+//! Run `rdbm --help` for the list of commands.
+//!
 //! Exit status: 0 on success, 1 if the key was not found, iteration ended,
 //! or an error occurred, 2 on a usage error.
 //!
@@ -18,18 +20,30 @@ use std::process::ExitCode;
 
 use rdbm::{CreateOptions, Database};
 
-const USAGE: &str = "\
-usage: rdbm create [--page-size N] [--max-depth N] FILE
-       rdbm put FILE KEY VALUE
-       rdbm get FILE KEY
-       rdbm delete FILE KEY
-       rdbm count FILE
-       rdbm list FILE
-       rdbm firstkey FILE
-       rdbm nextkey FILE KEY
-       rdbm stats FILE
-       rdbm check FILE
-       rdbm reorganise FILE";
+const HELP: &str = "\
+usage: rdbm COMMAND [ARGS]
+
+Commands:
+  create [--page-size N] [--max-depth N] FILE
+                     Create an empty database; fails if FILE exists
+  put FILE KEY VALUE Insert KEY, or update its value
+  get FILE KEY       Print the value of KEY
+  delete FILE KEY    Delete KEY
+  list FILE          Print every key, one per line
+  dump FILE          Print every entry as KEY<TAB>VALUE
+  count FILE         Print the number of keys
+  firstkey FILE      Print the first key in iteration order
+  nextkey FILE KEY   Print the key after KEY in iteration order
+  stats FILE         Print statistics as name=value lines
+  check FILE         Verify the file's structure
+  reorganise FILE    Rebuild the file to reclaim space (also: reorganize)
+
+Options:
+  -h, --help         Print this help
+  -V, --version      Print the version
+
+Exit status: 0 on success; 1 if the key was not found, iteration ended, or
+an error occurred; 2 on a usage error.";
 
 enum Failure {
     Usage(String),
@@ -49,7 +63,7 @@ fn main() -> ExitCode {
             if !msg.is_empty() {
                 eprintln!("rdbm: {msg}");
             }
-            eprintln!("{USAGE}");
+            eprintln!("{HELP}");
             ExitCode::from(2)
         }
         Err(Failure::NotFound(msg) | Failure::Error(msg)) => {
@@ -66,6 +80,10 @@ fn run(args: &[String]) -> Result<(), Failure> {
     };
     let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
     match (command.as_str(), rest.as_slice()) {
+        ("-h" | "--help" | "help", []) => write_line(&[HELP.as_bytes()]),
+        ("-V" | "--version", []) => {
+            write_line(&[concat!("rdbm ", env!("CARGO_PKG_VERSION")).as_bytes()])
+        }
         ("create", _) => create(&rest),
         ("put", [file, key, value]) => {
             let mut db = open(file)?;
@@ -106,6 +124,15 @@ fn run(args: &[String]) -> Result<(), Failure> {
             let db = open_read_only(file)?;
             let mut out = io::stdout().lock();
             for entry in db.entries() {
+                let (key, _) = entry.map_err(|e| failed(file, e))?;
+                write_to(&mut out, &[&key])?;
+            }
+            Ok(())
+        }
+        ("dump", [file]) => {
+            let db = open_read_only(file)?;
+            let mut out = io::stdout().lock();
+            for entry in db.entries() {
                 let (key, value) = entry.map_err(|e| failed(file, e))?;
                 write_to(&mut out, &[&key, b"\t", &value])?;
             }
@@ -114,20 +141,25 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ("stats", [file]) => {
             let db = open_read_only(file)?;
             let s = db.stats().map_err(|e| failed(file, e))?;
+            // The first lines answer "how big is it, and does it need a
+            // reorganise?"; the rest describe the file's structure.
             let text = format!(
-                "page_size={}\npages={}\nglobal_depth={}\nmax_depth={}\n\
-                 directory_size={}\ndirectory_pages={}\nbuckets={}\n\
-                 overflow_pages={}\nfree_pages={}\nentries={}",
-                s.page_size,
-                s.pages,
-                s.global_depth,
-                s.max_depth,
-                s.directory_size,
-                s.directory_pages,
+                "entries={}\nfile_size={}\nbuckets={}\noverflow_pages={}\n\
+                 global_depth={}\nfill_percent={}\nfree_pages={}\n\
+                 page_size={}\npages={}\nmax_depth={}\n\
+                 directory_size={}\ndirectory_pages={}",
+                s.entries,
+                s.file_size,
                 s.buckets,
                 s.overflow_pages,
+                s.global_depth,
+                s.fill_percent(),
                 s.free_pages,
-                s.entries
+                s.page_size,
+                s.pages,
+                s.max_depth,
+                s.directory_size,
+                s.directory_pages
             );
             write_line(&[text.as_bytes()])
         }
@@ -140,7 +172,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
             write_line(&[b"ok"])
         }
         (
-            "put" | "get" | "delete" | "firstkey" | "nextkey" | "count" | "list" | "stats"
+            "put" | "get" | "delete" | "firstkey" | "nextkey" | "count" | "list" | "dump" | "stats"
             | "check" | "reorganise" | "reorganize",
             _,
         ) => Err(Failure::Usage(format!(

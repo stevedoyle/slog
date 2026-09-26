@@ -32,6 +32,7 @@ Non-goals, for now:
 | 3 | Persist to a single file; `rdbm` CLI | Done |
 | 4 | Iterate with `firstkey` and `nextkey` | Done |
 | 5 | Reorganise: rebuild to reclaim space | Done |
+| 6 | Complete CLI; performance measurements | Done |
 | Later | Large values, locking, buffered writes | Not started |
 
 ## Crate layout
@@ -57,7 +58,8 @@ rdbmtool/
 │   ├── cli.rs                  # runs the `rdbm` binary
 │   └── support/mod.rs          # temporary file helper
 └── examples/
-    └── hashtable.rs            # stdin-driven test program for HashTable
+    ├── hashtable.rs            # stdin-driven test program for HashTable
+    └── bench.rs                # timing of lookups, iteration, reorganise
 ```
 
 The storage engine is a library, so it can be tested without any I/O and
@@ -584,12 +586,15 @@ valid page number.
 | `rdbm get FILE KEY` | Look up KEY | The value and a newline |
 | `rdbm delete FILE KEY` | Remove KEY | None |
 | `rdbm count FILE` | Count entries | The number |
-| `rdbm list FILE` | Show every entry, in iteration order | `KEY<TAB>VALUE` per line |
+| `rdbm list FILE` | List every key, in iteration order | One key per line |
+| `rdbm dump FILE` | Show every entry, in iteration order | `KEY<TAB>VALUE` per line |
 | `rdbm firstkey FILE` | First key in iteration order | The key |
 | `rdbm nextkey FILE KEY` | Key after KEY in iteration order | The key |
 | `rdbm stats FILE` | Show file statistics | `name=value` per line |
 | `rdbm check FILE` | Verify the file | `ok` |
 | `rdbm reorganise FILE` | Rebuild the file to reclaim space; `reorganize` also works | None |
+| `rdbm --help`, `-h`, `help` | Show usage | Help text |
+| `rdbm --version`, `-V` | Show the version | `rdbm 0.1.0` |
 
 Results go to stdout, diagnostics to stderr, prefixed `rdbm:`. The exit
 status is 0 on success, 1 if the key was not found, iteration ended, or an
@@ -604,7 +609,8 @@ done
 ```
 
 Read-only commands open the file read-only. If the reader closes the pipe,
-as in `rdbm list db | head`, rdbm exits quietly.
+as in `rdbm list db | head`, rdbm exits quietly. A usage error prints the
+message and the help text to stderr.
 
 ```console
 $ rdbm create test.db
@@ -615,9 +621,39 @@ value one
 $ rdbm delete test.db key1
 $ rdbm get test.db key1
 rdbm: key1: not found
-$ rdbm list test.db | sort
+$ rdbm list test.db
+key2
+$ rdbm dump test.db
 key2	value two
 ```
+
+### Statistics
+
+`rdbm stats` prints one `name=value` line per statistic, so it is readable
+as is and easy to script, for example `rdbm stats db | grep fill`. The first
+seven lines answer "how big is it, and would a reorganise help?". The rest
+describe the file's structure.
+
+| Name | Meaning |
+|------|---------|
+| `entries` | Number of keys |
+| `file_size` | Size of the file on disk, in bytes |
+| `buckets` | Number of buckets (primary bucket pages) |
+| `overflow_pages` | Overflow pages chained off buckets |
+| `global_depth` | Directory depth; the directory has `2^global_depth` slots |
+| `fill_percent` | Record bytes (slots, keys, values) as a percentage of the record space in bucket and overflow pages |
+| `free_pages` | Pages on the free list |
+| `page_size` | Bytes per page |
+| `pages` | Total pages in the file |
+| `max_depth` | Depth past which buckets overflow instead of splitting |
+| `directory_size` | Directory slots |
+| `directory_pages` | Pages holding the directory |
+
+A reorganise is likely to help when `free_pages` is large or `fill_percent`
+is low. In the 3,000-key CLI run below, deleting 2,500 keys left
+`fill_percent=12` across 32 buckets. Reorganising gave 6 buckets at 67%.
+Buckets that have just split are about half full, so a steady state around
+50–70% is normal.
 
 **Subcommands vs. separate tools.** The design philosophy prefers many small
 executables. `rdbm` uses subcommands instead, because the operations share
@@ -626,8 +662,60 @@ drop-in for `gdbmtool` and `ccdbm`-style usage, and one binary keeps
 installation simple. Each subcommand still does one thing and composes
 through stdout and exit codes.
 
-`list` is not safe for keys or values containing tabs or newlines. A later
-dump format should escape them.
+`list` and `dump` are not safe for keys or values containing newlines, and
+`dump` is not safe for keys containing tabs. A later version should escape
+them.
+
+## Performance
+
+Measured on an Apple M1 Pro running macOS, with the default 4 KiB pages,
+11-byte keys, and values of about 45 bytes. The file is served from the operating
+system's page cache, so the figures are CPU and system-call costs, not disk
+latency.
+
+### Library
+
+`cargo run --release --example bench -- DIR` loads N keys with per-write sync
+off, then times each operation:
+
+| Keys | Depth | File | Put | Get (hit) | Get (miss) | `entries()` walk | `next_key` walk | Reorganise all | Reorganise after 90% deleted | File before → after |
+|-----:|------:|-----:|----:|----------:|-----------:|-----------------:|----------------:|---------------:|-----------------------------:|--------------------|
+| 1,000 | 5 | 120 KiB | 33 µs | 5.2 µs | 6.5 µs | <1 ms | 6 ms | 30 ms | 16 ms | 120 → 20 KiB |
+| 10,000 | 8 | 1.0 MiB | 9.0 µs | 2.5 µs | 2.5 µs | 1 ms | 27 ms | 69 ms | 20 ms | 1032 → 112 KiB |
+| 100,000 | 12 | 9.1 MiB | 6.7 µs | 2.8 µs | 3.2 µs | 9 ms | 297 ms | 542 ms | 74 ms | 9.1 → 1.0 MiB |
+| 1,000,000 | 16 | 112 MiB | 7.4 µs | 3.1 µs | 3.0 µs | 103 ms | 2.6 s | 5.4 s | 573 ms | 112 → 9.4 MiB |
+
+- **Lookups are constant time.** A get costs about 3 µs from 10,000 to
+  1,000,000 keys: one `pread` of a 4 KiB page, plus decoding it. The 1,000-key
+  row is higher because it runs first, while the process is still warming up.
+- **Reorganise is linear.** It costs about 5.4 µs per record copied, mostly
+  the insert into the new file. Below about 10,000 records it is dominated by
+  its two full disk flushes (the new file and its directory), about 15–30 ms
+  on this machine.
+- **Walks.** `entries()` reads each bucket once, about 0.1 µs per key.
+  Walking with `next_key` costs about 2.6 µs per key, because each call
+  reads and decodes the whole bucket again. That is the price of dbm's
+  stateless interface, so `rdbm list` and `dump` use `entries()`.
+- **Space.** A full database is about 60% full. Record overhead is 16 bytes
+  of slot per record, and buckets that have just split are half empty.
+
+### Command line
+
+Each `rdbm` command is a separate process, so its cost is dominated by
+process startup and, for writes, the disk flush. With 3,000 keys, measured
+from a bash loop:
+
+| Operation | Time |
+|-----------|------|
+| `rdbm put` (flushes to disk) | 9.7 ms per call |
+| `rdbm get` | 2.8 ms per call |
+| `rdbm reorganise` (500 keys left, 136 KiB → 32 KiB) | 34 ms |
+
+The same run confirmed that all 3,000 keys were retrievable, that `list`
+and a `firstkey`/`nextkey` walk each returned all 3,000 exactly once, and
+that reorganising preserved the 500 keys left after deleting 2,500. For
+bulk loads, use the library with `set_sync(false)`, which is about 1,000
+times faster than one synced CLI call per key.
 
 ### Inspecting a file with xxd
 
@@ -766,6 +854,8 @@ checking, so the results must come from disk:
 - `create` refusing to overwrite a file, and rejecting bad options
 - `open` rejecting a missing, empty, non-database, or truncated file
 - `check` detecting a key byte flipped on disk
+- `stats` reporting the true file size, and a fill that drops after deletes
+  and recovers after a reorganise
 - a read-only handle rejecting writes
 
 Integration tests in `tests/iteration.rs` cover:
@@ -808,7 +898,16 @@ scenario across separate runs; delete followed by get failing; `list` output;
 `create` options showing in `stats`; a `firstkey`/`nextkey` walk matching
 `list`, including a quiet exit 1 at the end; `reorganise` keeping the
 remaining keys, printing nothing, and accepting `reorganize`; and the exit status for usage
-errors and other failures.
+errors and other failures. It also covers:
+
+- the complete workflow from step 6: create, put, get, list, stats, delete,
+  get failing, reorganise, get
+- `list` printing keys and `dump` printing pairs
+- `stats` printing exactly the documented fields, with `file_size` matching
+  the file
+- 3,000 keys loaded through the library, then `list` returning each exactly
+  once, and `get`, `count`, `check`, and `stats` all agreeing
+- `--help` naming every command, and `--version`
 
 To see the directory trace:
 

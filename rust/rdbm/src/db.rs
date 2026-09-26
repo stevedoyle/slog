@@ -53,6 +53,21 @@ pub struct Stats {
     pub overflow_pages: u64,
     pub free_pages: u64,
     pub entries: u64,
+    /// Size of the file on disk, in bytes.
+    pub file_size: u64,
+    /// Bytes of bucket and overflow pages occupied by records: their slots,
+    /// keys, and values.
+    pub record_bytes: u64,
+}
+
+impl Stats {
+    /// How full the bucket and overflow pages are, from 0 to 100: record
+    /// bytes as a share of the space those pages offer for records.
+    pub fn fill_percent(&self) -> u64 {
+        let usable = (self.page_size as usize - format::PAGE_HEADER_LEN) as u64;
+        let capacity = (self.buckets + self.overflow_pages) * usable;
+        (self.record_bytes * 100).checked_div(capacity).unwrap_or(0)
+    }
 }
 
 #[derive(Debug)]
@@ -384,9 +399,12 @@ impl Database {
     pub fn stats(&self) -> Result<Stats> {
         let mut buckets = 0;
         let mut overflow_pages = 0;
+        let mut record_bytes = 0;
         for (_, page) in self.bucket_runs() {
+            let chain = self.load_chain(page)?;
             buckets += 1;
-            overflow_pages += self.load_chain(page)?.pages.len() as u64 - 1;
+            overflow_pages += chain.pages.len() as u64 - 1;
+            record_bytes += (format::used_bytes(&chain.records) - format::PAGE_HEADER_LEN) as u64;
         }
         Ok(Stats {
             page_size: self.header.page_size,
@@ -399,6 +417,8 @@ impl Database {
             overflow_pages,
             free_pages: self.free_list()?.len() as u64,
             entries: self.header.entry_count,
+            file_size: self.pager.file_len()?,
+            record_bytes,
         })
     }
 

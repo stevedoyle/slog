@@ -2,8 +2,10 @@
 
 mod support;
 
+use std::collections::BTreeMap;
 use std::process::{Command, Output};
 
+use rdbm::{CreateOptions, Database};
 use support::TempPath;
 
 fn rdbm(args: &[&str]) -> Output {
@@ -56,19 +58,20 @@ fn delete_then_get_reports_not_found() {
 }
 
 #[test]
-fn list_prints_tab_separated_pairs() {
+fn list_prints_keys_and_dump_prints_pairs() {
     let tmp = TempPath::new("cli-list.db");
     let db = tmp.path().to_str().unwrap();
     rdbm(&["create", db]);
     rdbm(&["put", db, "b", "2"]);
     rdbm(&["put", db, "a", "1"]);
 
-    let mut lines: Vec<String> = stdout(&rdbm(&["list", db]))
-        .lines()
-        .map(str::to_owned)
-        .collect();
-    lines.sort();
-    assert_eq!(lines, ["a\t1", "b\t2"]);
+    let sorted_lines = |args: &[&str]| {
+        let mut lines: Vec<String> = stdout(&rdbm(args)).lines().map(str::to_owned).collect();
+        lines.sort();
+        lines
+    };
+    assert_eq!(sorted_lines(&["list", db]), ["a", "b"]);
+    assert_eq!(sorted_lines(&["dump", db]), ["a\t1", "b\t2"]);
 }
 
 #[test]
@@ -175,4 +178,151 @@ fn reorganise_keeps_remaining_keys() {
 
     // gdbmtool's spelling works too.
     assert!(rdbm(&["reorganize", db]).status.success());
+}
+
+/// Parses `name=value` lines from `rdbm stats`.
+fn stats(db: &str) -> BTreeMap<String, u64> {
+    stdout(&rdbm(&["stats", db]))
+        .lines()
+        .map(|l| {
+            let (name, value) = l.split_once('=').expect("name=value");
+            (name.to_owned(), value.parse().expect("number"))
+        })
+        .collect()
+}
+
+#[test]
+fn complete_workflow() {
+    let tmp = TempPath::new("cli-demo.db");
+    let db = tmp.path().to_str().unwrap();
+
+    assert!(rdbm(&["create", db]).status.success());
+    rdbm(&["put", db, "title", "The Lord of the Rings"]);
+    rdbm(&["put", db, "author", "J.R.R. Tolkien"]);
+    rdbm(&["put", db, "year", "1954"]);
+
+    assert_eq!(
+        stdout(&rdbm(&["get", db, "title"])),
+        "The Lord of the Rings\n"
+    );
+    assert_eq!(stdout(&rdbm(&["get", db, "author"])), "J.R.R. Tolkien\n");
+
+    let mut keys: Vec<String> = stdout(&rdbm(&["list", db]))
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    keys.sort();
+    assert_eq!(keys, ["author", "title", "year"]);
+
+    let s = stats(db);
+    assert_eq!(s["entries"], 3);
+    assert_eq!(s["file_size"], std::fs::metadata(db).unwrap().len());
+    assert_eq!(
+        (s["buckets"], s["overflow_pages"], s["global_depth"]),
+        (1, 0, 0)
+    );
+
+    assert!(rdbm(&["delete", db, "year"]).status.success());
+    let out = rdbm(&["get", db, "year"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stderr(&out), "rdbm: year: not found\n");
+
+    assert!(rdbm(&["reorganise", db]).status.success());
+    assert_eq!(
+        stdout(&rdbm(&["get", db, "title"])),
+        "The Lord of the Rings\n"
+    );
+    assert_eq!(stats(db)["entries"], 2);
+}
+
+#[test]
+fn stats_names_every_field() {
+    let tmp = TempPath::new("cli-stats.db");
+    let db = tmp.path().to_str().unwrap();
+    rdbm(&["create", db]);
+    let names: Vec<String> = stats(db).into_keys().collect();
+    let mut expected = [
+        "entries",
+        "file_size",
+        "buckets",
+        "overflow_pages",
+        "global_depth",
+        "fill_percent",
+        "free_pages",
+        "page_size",
+        "pages",
+        "max_depth",
+        "directory_size",
+        "directory_pages",
+    ];
+    expected.sort();
+    assert_eq!(names, expected);
+}
+
+#[test]
+fn thousands_of_keys_via_the_cli() {
+    let tmp = TempPath::new("cli-large.db");
+    let db = tmp.path().to_str().unwrap();
+    let n = 3000;
+    {
+        // Load through the library; thousands of synced CLI puts would take
+        // tens of seconds.
+        let mut d = Database::create(db, CreateOptions::default()).unwrap();
+        d.set_sync(false);
+        for i in 0..n {
+            d.put(
+                format!("key{i}").as_bytes(),
+                format!("value {i}").as_bytes(),
+            )
+            .unwrap();
+        }
+        d.sync().unwrap();
+    }
+
+    let mut listed: Vec<String> = stdout(&rdbm(&["list", db]))
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    listed.sort();
+    let mut expected: Vec<String> = (0..n).map(|i| format!("key{i}")).collect();
+    expected.sort();
+    assert_eq!(listed, expected, "every key listed exactly once");
+
+    for i in (0..n).step_by(97) {
+        assert_eq!(
+            stdout(&rdbm(&["get", db, &format!("key{i}")])),
+            format!("value {i}\n")
+        );
+    }
+    assert_eq!(stdout(&rdbm(&["count", db])), format!("{n}\n"));
+    assert_eq!(stdout(&rdbm(&["check", db])), "ok\n");
+    let s = stats(db);
+    assert!(s["buckets"] > 1 && s["global_depth"] > 0, "{s:?}");
+}
+
+#[test]
+fn help_and_version() {
+    for flag in ["--help", "-h", "help"] {
+        let out = rdbm(&[flag]);
+        assert!(out.status.success(), "{flag}");
+        for command in [
+            "create",
+            "put",
+            "get",
+            "delete",
+            "list",
+            "stats",
+            "reorganise",
+        ] {
+            assert!(stdout(&out).contains(command), "{flag} mentions {command}");
+        }
+    }
+    for flag in ["--version", "-V"] {
+        let out = rdbm(&[flag]);
+        assert!(out.status.success());
+        assert_eq!(
+            stdout(&out),
+            format!("rdbm {}\n", env!("CARGO_PKG_VERSION"))
+        );
+    }
 }

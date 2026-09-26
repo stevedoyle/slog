@@ -290,3 +290,34 @@ fn read_only_handle_rejects_writes() {
     let mut db = Database::open_read_only(tmp.path()).unwrap();
     assert!(db.put(b"k", b"v").is_err());
 }
+
+#[test]
+fn stats_report_file_size_and_fill() {
+    let tmp = TempPath::new("stats.db");
+    let db = populated(&tmp, CreateOptions::default(), 2000);
+    let full = db.stats().unwrap();
+    assert_eq!(full.file_size, fs::metadata(tmp.path()).unwrap().len());
+    assert_eq!(full.file_size, full.pages * u64::from(full.page_size));
+    assert!((30..=100).contains(&full.fill_percent()), "{full:?}");
+    drop(db);
+
+    let mut db = Database::open(tmp.path()).unwrap();
+    db.set_sync(false);
+    for i in 0..1900 {
+        db.delete(&key(i)).unwrap();
+    }
+    let sparse = db.stats().unwrap();
+    assert!(
+        sparse.fill_percent() < full.fill_percent() / 4,
+        "{sparse:?}"
+    );
+    drop(db);
+
+    rdbm::reorganise(tmp.path()).unwrap();
+    let compact = Database::open(tmp.path()).unwrap().stats().unwrap();
+    assert!(
+        compact.fill_percent() > sparse.fill_percent() * 2,
+        "{compact:?}"
+    );
+    assert!(compact.file_size < sparse.file_size);
+}
