@@ -111,3 +111,46 @@ fn errors_name_the_file_and_exit_1() {
     let out = rdbm(&["create", db]);
     assert_eq!(out.status.code(), Some(1), "create over an existing file");
 }
+
+#[test]
+fn firstkey_nextkey_walk_every_key_once() {
+    let tmp = TempPath::new("cli-iter.db");
+    let db = tmp.path().to_str().unwrap();
+    rdbm(&["create", db]);
+    for (k, v) in [("apple", "red"), ("banana", "yellow"), ("cherry", "red")] {
+        rdbm(&["put", db, k, v]);
+    }
+
+    let mut seen = Vec::new();
+    let mut out = rdbm(&["firstkey", db]);
+    while out.status.success() {
+        let key = stdout(&out).trim_end_matches('\n').to_owned();
+        out = rdbm(&["nextkey", db, &key]);
+        seen.push(key);
+    }
+    // The end of iteration is exit 1 with no output and no message.
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!((stdout(&out), stderr(&out)), (String::new(), String::new()));
+
+    let listed: Vec<String> = stdout(&rdbm(&["list", db]))
+        .lines()
+        .map(|l| l.split('\t').next().unwrap().to_owned())
+        .collect();
+    assert_eq!(listed, seen, "list uses the same order");
+    seen.sort();
+    assert_eq!(seen, ["apple", "banana", "cherry"]);
+
+    rdbm(&["delete", db, "banana"]);
+    let out = rdbm(&["nextkey", db, "banana"]);
+    assert!(out.status.success(), "nextkey resumes from a deleted key");
+}
+
+#[test]
+fn firstkey_on_empty_database_exits_1() {
+    let tmp = TempPath::new("cli-iter-empty.db");
+    let db = tmp.path().to_str().unwrap();
+    rdbm(&["create", db]);
+    let out = rdbm(&["firstkey", db]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stdout(&out), "");
+}

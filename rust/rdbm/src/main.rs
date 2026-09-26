@@ -3,8 +3,15 @@
 //! Each invocation performs one operation and exits, so it composes with
 //! shell pipelines and scripts. Results go to stdout, diagnostics to stderr.
 //!
-//! Exit status: 0 on success, 1 if the key was not found or an error
-//! occurred, 2 on a usage error.
+//! Exit status: 0 on success, 1 if the key was not found, iteration ended,
+//! or an error occurred, 2 on a usage error.
+//!
+//! `firstkey` and `nextkey` walk the keys in hash order and exit 1 without a
+//! message at the end, so they drive a shell loop:
+//!
+//!   key=$(rdbm firstkey db) && while :; do
+//!       echo "$key"; key=$(rdbm nextkey db "$key") || break
+//!   done
 
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -18,12 +25,16 @@ usage: rdbm create [--page-size N] [--max-depth N] FILE
        rdbm delete FILE KEY
        rdbm count FILE
        rdbm list FILE
+       rdbm firstkey FILE
+       rdbm nextkey FILE KEY
        rdbm stats FILE
        rdbm check FILE";
 
 enum Failure {
     Usage(String),
     NotFound(String),
+    /// Iteration reached the end; exit 1 without a message.
+    End,
     Error(String),
     /// Stdout was closed by the reader, as in `rdbm list db | head`.
     BrokenPipe,
@@ -44,7 +55,7 @@ fn main() -> ExitCode {
             eprintln!("rdbm: {msg}");
             ExitCode::FAILURE
         }
-        Err(Failure::BrokenPipe) => ExitCode::FAILURE,
+        Err(Failure::End | Failure::BrokenPipe) => ExitCode::FAILURE,
     }
 }
 
@@ -75,6 +86,16 @@ fn run(args: &[String]) -> Result<(), Failure> {
                 .map_err(|e| failed(file, e))?
                 .ok_or_else(|| Failure::NotFound(format!("{key}: not found")))?;
             Ok(())
+        }
+        ("firstkey", [file]) => {
+            let db = open_read_only(file)?;
+            let key = db.first_key().map_err(|e| failed(file, e))?;
+            write_line(&[&key.ok_or(Failure::End)?])
+        }
+        ("nextkey", [file, key]) => {
+            let db = open_read_only(file)?;
+            let next = db.next_key(key.as_bytes()).map_err(|e| failed(file, e))?;
+            write_line(&[&next.ok_or(Failure::End)?])
         }
         ("count", [file]) => {
             let db = open_read_only(file)?;
@@ -114,9 +135,13 @@ fn run(args: &[String]) -> Result<(), Failure> {
             db.check().map_err(|e| failed(file, e))?;
             write_line(&[b"ok"])
         }
-        ("put" | "get" | "delete" | "count" | "list" | "stats" | "check", _) => Err(
-            Failure::Usage(format!("wrong number of arguments to {command}")),
-        ),
+        (
+            "put" | "get" | "delete" | "firstkey" | "nextkey" | "count" | "list" | "stats"
+            | "check",
+            _,
+        ) => Err(Failure::Usage(format!(
+            "wrong number of arguments to {command}"
+        ))),
         _ => Err(Failure::Usage(format!("unknown command: {command}"))),
     }
 }

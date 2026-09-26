@@ -71,6 +71,11 @@ struct Chain {
     records: Vec<Record>,
 }
 
+/// A record's position in iteration order.
+fn order(r: &Record) -> (u64, &[u8]) {
+    (r.hash, &r.key)
+}
+
 fn corrupt<T>(msg: impl Into<String>) -> Result<T> {
     Err(Error::Corrupt(msg.into()))
 }
@@ -306,8 +311,51 @@ impl Database {
         Ok(Some(removed.value))
     }
 
-    /// Iterates over every `(key, value)` pair, one bucket at a time, in
-    /// directory order.
+    /// The first key in iteration order, or `None` if the database is empty.
+    ///
+    /// Iteration order is by key hash, then by key bytes. Buckets divide the
+    /// hash space in directory order, so this is also bucket order, and it
+    /// does not depend on how buckets have split or where records sit within
+    /// their pages.
+    pub fn first_key(&self) -> Result<Option<Vec<u8>>> {
+        self.key_after(None)
+    }
+
+    /// The key that follows `key` in iteration order, or `None` at the end.
+    ///
+    /// `key` need not be present. Because the order is fixed, deleting the
+    /// current key (or any other) during iteration is safe, and so are
+    /// inserts: every key present throughout the iteration is returned
+    /// exactly once. A key inserted mid-iteration is returned only if it
+    /// sorts after the current position.
+    pub fn next_key(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.key_after(Some((key_hash(key), key)))
+    }
+
+    /// The smallest key ordered after `after`, or the smallest key overall.
+    fn key_after(&self, after: Option<(u64, &[u8])>) -> Result<Option<Vec<u8>>> {
+        let dir = &self.directory;
+        // Buckets before the one `after` hashes to hold only smaller keys.
+        let mut slot = after.map_or(0, |(hash, _)| prefix(hash, self.header.global_depth.into()));
+        while let Some(&page) = dir.get(slot) {
+            let chain = self.load_chain(page)?;
+            let next = chain
+                .records
+                .into_iter()
+                .filter(|r| after.is_none_or(|a| order(r) > a))
+                .min_by(|a, b| order(a).cmp(&order(b)));
+            if let Some(r) = next {
+                return Ok(Some(r.key));
+            }
+            while dir.get(slot) == Some(&page) {
+                slot += 1;
+            }
+        }
+        Ok(None)
+    }
+
+    /// Iterates over every `(key, value)` pair in iteration order (see
+    /// [`Database::first_key`]), reading one bucket at a time.
     pub fn entries(&self) -> Entries<'_> {
         Entries {
             db: self,
@@ -652,7 +700,10 @@ impl Iterator for Entries<'_> {
                 self.slot += 1;
             }
             match self.db.load_chain(page) {
-                Ok(chain) => self.pending = chain.records.into_iter(),
+                Ok(mut chain) => {
+                    chain.records.sort_by(|a, b| order(a).cmp(&order(b)));
+                    self.pending = chain.records.into_iter();
+                }
                 Err(e) => {
                     self.slot = dir.len();
                     return Some(Err(e));

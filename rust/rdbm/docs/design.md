@@ -30,6 +30,7 @@ Non-goals, for now:
 | 1 | In-memory hash table: put, get, delete | Done |
 | 2 | Replace it with extendible hashing | Done |
 | 3 | Persist to a single file; `rdbm` CLI | Done |
+| 4 | Iterate with `firstkey` and `nextkey` | Done |
 | Later | Large values, locking, buffered writes | Not started |
 
 ## Crate layout
@@ -49,6 +50,7 @@ rdbmtool/
 ├── tests/
 │   ├── extendible_hashing.rs   # in-memory split, delete, reuse scenarios
 │   ├── disk.rs                 # persistence, overflow, corruption
+│   ├── iteration.rs            # first_key/next_key, mutation mid-iteration
 │   ├── cli.rs                  # runs the `rdbm` binary
 │   └── support/mod.rs          # temporary file helper
 └── examples/
@@ -418,6 +420,58 @@ old directory pages go on the free list.
 Every mutation ends by writing the header, which holds the entry count, page
 count, and free list head.
 
+### Iteration
+
+`first_key()` returns the first key, and `next_key(key)` returns the key
+after `key`, following dbm's `firstkey` and `nextkey`. `entries()`, and
+therefore `rdbm list`, returns records in the same order.
+
+**Order.** Keys are ordered by `(key_hash(key), key bytes)`. The key bytes
+only break ties between keys whose hashes are identical. Each bucket owns
+one run of directory slots, which is a contiguous range of hash prefixes, so
+walking the directory from slot 0 visits buckets in hash order. The order
+looks random, as expected for a hash-based store, but it is a fixed total
+order.
+
+**`next_key(key)`** returns the smallest key ordered after `key`:
+
+1. Start at the directory slot for `key`'s hash. Earlier buckets hold only
+   keys that sort before it.
+2. Read that bucket's chain and pick the smallest record ordered after
+   `key`.
+3. If there is none, skip to the first slot of the next bucket and repeat.
+   In that bucket, every key sorts after `key`, so the result is its
+   smallest record.
+
+`key` does not need to be present. The iterator keeps no cursor state
+between calls: the key itself is the position. That is what dbm's interface
+requires, since `nextkey` receives only a key.
+
+**Mutation during iteration.** Because the position is a point in a fixed
+order, not a slot in a page, iteration stays well-defined while the database
+changes:
+
+| Change mid-iteration | Effect |
+|----------------------|--------|
+| Delete the current key | Safe. `next_key` on the deleted key resumes correctly. |
+| Delete any other key | That key is not returned, unless it already was. |
+| Insert a key | Returned if it sorts after the current position, otherwise not. |
+| A bucket splits or the directory doubles | No effect. The order does not depend on the bucket layout. |
+
+Every key present for the whole iteration is returned exactly once.
+
+**Why no tombstones.** The original dbm marked deleted records as empty
+slots, so that positions within a bucket stayed stable during iteration.
+Here, iteration never depends on a record's position, so `delete` removes the
+record and compacts the page. Freed space is reused immediately, and pages
+never fill up with dead slots.
+
+**Cost.** `next_key` reads one bucket chain, or more if it must skip past
+empty buckets. It sorts nothing: finding the minimum is a linear scan. A full
+walk with `next_key` therefore reads each chain about once per key in it.
+`entries()` reads each chain once and sorts its records, so `rdbm list`
+uses it.
+
 ### Durability
 
 By default each mutation calls `sync_data` after writing its pages and
@@ -477,14 +531,26 @@ valid page number.
 | `rdbm get FILE KEY` | Look up KEY | The value and a newline |
 | `rdbm delete FILE KEY` | Remove KEY | None |
 | `rdbm count FILE` | Count entries | The number |
-| `rdbm list FILE` | Show every entry, in hash order | `KEY<TAB>VALUE` per line |
+| `rdbm list FILE` | Show every entry, in iteration order | `KEY<TAB>VALUE` per line |
+| `rdbm firstkey FILE` | First key in iteration order | The key |
+| `rdbm nextkey FILE KEY` | Key after KEY in iteration order | The key |
 | `rdbm stats FILE` | Show file statistics | `name=value` per line |
 | `rdbm check FILE` | Verify the file | `ok` |
 
 Results go to stdout, diagnostics to stderr, prefixed `rdbm:`. The exit
-status is 0 on success, 1 if the key was not found or an error occurred, and
-2 on a usage error. Read-only commands open the file read-only. If the reader
-closes the pipe, as in `rdbm list db | head`, rdbm exits quietly.
+status is 0 on success, 1 if the key was not found, iteration ended, or an
+error occurred, and 2 on a usage error. At the end of iteration, `firstkey`
+and `nextkey` exit 1 without printing anything, so they can drive a shell
+loop:
+
+```sh
+key=$(rdbm firstkey db) && while :; do
+    echo "$key"; key=$(rdbm nextkey db "$key") || break
+done
+```
+
+Read-only commands open the file read-only. If the reader closes the pipe,
+as in `rdbm list db | head`, rdbm exits quietly.
 
 ```console
 $ rdbm create test.db
@@ -648,13 +714,29 @@ checking, so the results must come from disk:
 - `check` detecting a key byte flipped on disk
 - a read-only handle rejecting writes
 
+Integration tests in `tests/iteration.rs` cover:
+
+- an empty database
+- `apple`, `banana`, and `cherry` each returned exactly once after a reopen
+- 1,000 keys returned in strictly increasing `(hash, key)` order, the same
+  order as `entries`
+- a deleted key no longer appearing
+- `next_key` resuming from a deleted key and from a key never inserted
+- deleting each key as it is visited: all 500 are still visited
+- inserting 3 keys at every step of a 300-key walk, which more than doubles
+  the bucket count: every original key is visited once and no key twice
+- keys inserted into space freed by deletes, with no new pages, appearing
+  after a reopen
+- walking across overflow chains at max depth 0 and 2
+
 Bulk tests turn per-write sync off and call `sync` once at the end. With it
 on, each insert would cost several milliseconds.
 
 `tests/cli.rs` runs the `rdbm` binary. It covers the create, put, and get
 scenario across separate runs; delete followed by get failing; `list` output;
-`create` options showing in `stats`; and the exit status for usage errors
-and other failures.
+`create` options showing in `stats`; a `firstkey`/`nextkey` walk matching
+`list`, including a quiet exit 1 at the end; and the exit status for usage
+errors and other failures.
 
 To see the directory trace:
 

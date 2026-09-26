@@ -33,11 +33,13 @@ $ rdbm count test.db
 | `rdbm get FILE KEY` | Print the value of KEY |
 | `rdbm delete FILE KEY` | Remove KEY |
 | `rdbm count FILE` | Print the number of entries |
-| `rdbm list FILE` | Print every entry as `KEY<TAB>VALUE`, in hash order |
+| `rdbm list FILE` | Print every entry as `KEY<TAB>VALUE`, in iteration order |
+| `rdbm firstkey FILE` | Print the first key |
+| `rdbm nextkey FILE KEY` | Print the key after KEY; works even if KEY was deleted |
 | `rdbm stats FILE` | Print file statistics as `name=value` lines |
 | `rdbm check FILE` | Verify the file's structure; prints `ok` |
 
-Output goes to stdout and errors to stderr, so the commands compose in pipelines, for example `rdbm list test.db | sort`. The exit status is 0 on success, 1 if the key was not found or an error occurred, and 2 on a usage error.
+Output goes to stdout and errors to stderr, so the commands compose in pipelines, for example `rdbm list test.db | sort`. The exit status is 0 on success, 1 if the key was not found, iteration ended, or an error occurred, and 2 on a usage error.
 
 By default, pages are 4096 bytes and the directory grows to at most 2^24 slots. Past that depth, buckets chain overflow pages instead of splitting. Every change is flushed to disk before the command exits.
 
@@ -45,6 +47,7 @@ By default, pages are 4096 bytes and the directory grows to at most 2^24 slots. 
 
 - **Extendible hashing.** A directory of `2^global_depth` slots maps the top bits of a key's hash to a bucket. A full bucket splits on its own, and the directory doubles only when needed, so the table never rehashes everything at once.
 - **Single-file format.** The file holds a header page, the directory pages, and then bucket, overflow, and free pages. Records within a page are located through a slot array.
+- **Iteration.** Keys come back in a fixed order, sorted by hash and then key bytes, so `nextkey` stays correct even when keys are deleted, inserted, or buckets split during a walk.
 - **Hashing.** Keys are hashed with FNV-1a followed by MurmurHash3's `fmix64` finalizer. The finalizer spreads every input bit into the top bits that the directory uses.
 
 See [docs/design.md](docs/design.md) for the full on-disk format with an annotated hex dump, the algorithms, the invariants, and the limitations.
