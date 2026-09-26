@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -16 852 362" width="852" height="362" role="img" aria-label="File layout: page 0 header points to the directory at page 1 and to the free list head at page 4; free page 4 links to free page 7; bucket page 5 links to its overflow page 6. Directory page 1 maps slots to pages 2, 2, 3, 5. Below, bucket page 3 is expanded: a 16-byte header, slots growing forward, free space, and records packed from the end of the page, each slot holding the offset of its record.">
+  <title>File layout: page 0 header points to the directory at page 1 and to the free list head at page 4; free page 4 links to free page 7; bucket page 5 links to its overflow page 6. Directory page 1 maps slots to pages 2, 2, 3, 5. Below, bucket page 3 is expanded: a 16-byte header, slots growing forward, free space, and records packed from the end of the page, each slot holding the offset of its record.</title>
+  <style>
+  text { font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .title { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; font-weight: 600; }
+  .small { font-size: 11px; }
+  .lbl { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11px; }
+  .box, .bucket { stroke-width: 1.3; }
+  .meta { stroke-width: 1.2; }
+  .free { fill: none; stroke-width: 1.2; stroke-dasharray: 4 3; }
+  .io, .ioedge { stroke-width: 1.4; }
+  .hotbox, .hot { stroke-width: 2; }
+  .edge, .thin, .hot, .ioedge, .zoom { fill: none; }
+  .edge { stroke-width: 1.3; }
+  .thin, .zoom { stroke-width: 1; }
+  .dash { stroke-dasharray: 5 4; }
+  .zoom { stroke-dasharray: 3 3; }
+  .acc { font-weight: 600; }
+  svg { color: #1b2320; }
+  .bg { fill: #f5f6f3; }
+  text { fill: #1b2320; }
+  .small, .lbl, .mut-t { fill: #5c6862; }
+  .box { fill: #ffffff; stroke: #1b2320; }
+  .meta { fill: #e9ece6; stroke: #1b2320; }
+  .bucket, .hotbox { fill: #dcefeb; stroke: #0e6f68; }
+  .free { stroke: #5c6862; }
+  .io { fill: #f6ead8; stroke: #a8671a; }
+  .edge { stroke: #1b2320; }
+  .thin { stroke: #5c6862; }
+  .hot { stroke: #0e6f68; }
+  .ioedge { stroke: #a8671a; }
+  .zoom { stroke: #cfd5ce; }
+  text.acc, tspan.acc, text.acc-t { fill: #0e6f68; }
+  text.iot { fill: #a8671a; }
+  .mk { fill: #1b2320; }
+  .mk-hot { fill: #0e6f68; }
+  .mk-io { fill: #a8671a; }
+  .mk-muted { fill: #5c6862; }
+  @media (prefers-color-scheme: dark) {
+  svg { color: #e1e7e3; }
+  .bg { fill: #111614; }
+  text { fill: #e1e7e3; }
+  .small, .lbl, .mut-t { fill: #97a39d; }
+  .box { fill: #182019; stroke: #e1e7e3; }
+  .meta { fill: #212a25; stroke: #e1e7e3; }
+  .bucket, .hotbox { fill: #173532; stroke: #5cc4b6; }
+  .free { stroke: #97a39d; }
+  .io { fill: #33271a; stroke: #e3a650; }
+  .edge { stroke: #e1e7e3; }
+  .thin { stroke: #97a39d; }
+  .hot { stroke: #5cc4b6; }
+  .ioedge { stroke: #e3a650; }
+  .zoom { stroke: #34403a; }
+  text.acc, tspan.acc, text.acc-t { fill: #5cc4b6; }
+  text.iot { fill: #e3a650; }
+  .mk { fill: #e1e7e3; }
+  .mk-hot { fill: #5cc4b6; }
+  .mk-io { fill: #e3a650; }
+  .mk-muted { fill: #97a39d; }
+  }
+</style>
+  <rect class="bg" x="-16" y="-16" width="852" height="362" rx="8"/>
+          <defs>
+            <marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="m3mu" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="mk-muted" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="m3hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="mk-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <!-- pointer arcs above the strip -->
+          <path class="edge" d="M65,80 Q261,-40 455,78" marker-end="url(#m3)"/>
+          <text class="lbl" x="261" y="14" text-anchor="middle">free_head</text>
+          <path class="thin" d="M459,80 Q604,-40 749,78" marker-end="url(#m3mu)"/>
+          <text class="lbl" x="604" y="14" text-anchor="middle">next free</text>
+          <path class="hot" d="M555,80 Q604,28 651,78" marker-end="url(#m3hot)"/>
+          <text class="lbl acc-t" x="604" y="48" text-anchor="middle">next</text>
+
+          <!-- page strip -->
+          <rect class="meta" x="20" y="80" width="90" height="56" rx="3"/>
+          <text class="lbl" x="28" y="94">p0</text>
+          <text x="65" y="112" text-anchor="middle">header</text>
+          <text class="lbl" x="65" y="128" text-anchor="middle">dir_page=1</text>
+
+          <rect class="meta" x="118" y="80" width="90" height="56" rx="3"/>
+          <text class="lbl" x="126" y="94">p1</text>
+          <text x="163" y="112" text-anchor="middle">directory</text>
+          <text class="lbl" x="163" y="128" text-anchor="middle">[2,2,3,5]</text>
+
+          <rect class="bucket" x="216" y="80" width="90" height="56" rx="3"/>
+          <text class="lbl" x="224" y="94">p2</text>
+          <text x="261" y="112" text-anchor="middle">bucket</text>
+          <text class="lbl" x="261" y="128" text-anchor="middle">d=1</text>
+
+          <rect class="hotbox" x="314" y="80" width="90" height="56" rx="3"/>
+          <text class="lbl" x="322" y="94">p3</text>
+          <text x="359" y="112" text-anchor="middle">bucket</text>
+          <text class="lbl" x="359" y="128" text-anchor="middle">d=2</text>
+
+          <rect class="free" x="412" y="80" width="90" height="56" rx="3"/>
+          <text class="lbl" x="420" y="94">p4</text>
+          <text class="mut-t" x="457" y="112" text-anchor="middle">free</text>
+
+          <rect class="bucket" x="510" y="80" width="90" height="56" rx="3"/>
+          <text class="lbl" x="518" y="94">p5</text>
+          <text x="555" y="112" text-anchor="middle">bucket</text>
+          <text class="lbl" x="555" y="128" text-anchor="middle">d=2</text>
+
+          <rect class="bucket dash" x="608" y="80" width="90" height="56" rx="3"/>
+          <text class="lbl" x="616" y="94">p6</text>
+          <text x="653" y="112" text-anchor="middle">overflow</text>
+          <text class="lbl" x="653" y="128" text-anchor="middle">d=2</text>
+
+          <rect class="free" x="706" y="80" width="90" height="56" rx="3"/>
+          <text class="lbl" x="714" y="94">p7</text>
+          <text class="mut-t" x="751" y="112" text-anchor="middle">free</text>
+
+          <!-- zoom into page 3 -->
+          <line class="zoom" x1="314" y1="136" x2="20" y2="200"/>
+          <line class="zoom" x1="404" y1="136" x2="800" y2="200"/>
+          <text class="small" x="410" y="186" text-anchor="middle">page 3, expanded (schematic, not to scale)</text>
+
+          <rect class="meta" x="20" y="200" width="90" height="50"/>
+          <text x="65" y="221" text-anchor="middle">header</text>
+          <text class="lbl" x="65" y="239" text-anchor="middle">16 B</text>
+
+          <rect class="box" x="110" y="200" width="90" height="50"/>
+          <text x="155" y="221" text-anchor="middle">slot 0</text>
+          <text class="lbl" x="155" y="239" text-anchor="middle">hash·off·len</text>
+
+          <rect class="box" x="200" y="200" width="90" height="50"/>
+          <text x="245" y="221" text-anchor="middle">slot 1</text>
+          <text class="lbl" x="245" y="239" text-anchor="middle">16 B each</text>
+
+          <rect class="free" x="290" y="200" width="250" height="50"/>
+          <text class="mut-t" x="415" y="221" text-anchor="middle">free space</text>
+          <text class="lbl" x="415" y="239" text-anchor="middle">slots grow →   ← records grow</text>
+
+          <rect class="bucket" x="540" y="200" width="120" height="50"/>
+          <text class="mono" x="600" y="230" text-anchor="middle">key2value two</text>
+
+          <rect class="bucket" x="660" y="200" width="140" height="50"/>
+          <text class="mono" x="730" y="230" text-anchor="middle">key1value one</text>
+
+          <text class="lbl" x="20" y="196" text-anchor="start">0</text>
+          <text class="lbl" x="800" y="196" text-anchor="end">page_size</text>
+
+          <!-- slot offsets -->
+          <path class="thin" d="M245,250 Q422,314 598,252" marker-end="url(#m3mu)"/>
+          <path class="edge" d="M155,250 Q442,350 728,252" marker-end="url(#m3)"/>
+          <text class="lbl" x="442" y="322" text-anchor="middle">slot.offset → record (key bytes, then value bytes)</text>
+        </svg>

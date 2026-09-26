@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -16 852 324" width="852" height="324" role="img" aria-label="Lookup path for key1: the key is hashed with fnv1a then fmix64; the top three bits of the hash, 110, select directory slot 6 in the in-memory directory of eight slots; slot 6 holds page 6, which is read with one pread. The overflow page is read only if the key is not found and the chain continues.">
+  <title>Lookup path for key1: the key is hashed with fnv1a then fmix64; the top three bits of the hash, 110, select directory slot 6 in the in-memory directory of eight slots; slot 6 holds page 6, which is read with one pread. The overflow page is read only if the key is not found and the chain continues.</title>
+  <style>
+  text { font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .title { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; font-weight: 600; }
+  .small { font-size: 11px; }
+  .lbl { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11px; }
+  .box, .bucket { stroke-width: 1.3; }
+  .meta { stroke-width: 1.2; }
+  .free { fill: none; stroke-width: 1.2; stroke-dasharray: 4 3; }
+  .io, .ioedge { stroke-width: 1.4; }
+  .hotbox, .hot { stroke-width: 2; }
+  .edge, .thin, .hot, .ioedge, .zoom { fill: none; }
+  .edge { stroke-width: 1.3; }
+  .thin, .zoom { stroke-width: 1; }
+  .dash { stroke-dasharray: 5 4; }
+  .zoom { stroke-dasharray: 3 3; }
+  .acc { font-weight: 600; }
+  svg { color: #1b2320; }
+  .bg { fill: #f5f6f3; }
+  text { fill: #1b2320; }
+  .small, .lbl, .mut-t { fill: #5c6862; }
+  .box { fill: #ffffff; stroke: #1b2320; }
+  .meta { fill: #e9ece6; stroke: #1b2320; }
+  .bucket, .hotbox { fill: #dcefeb; stroke: #0e6f68; }
+  .free { stroke: #5c6862; }
+  .io { fill: #f6ead8; stroke: #a8671a; }
+  .edge { stroke: #1b2320; }
+  .thin { stroke: #5c6862; }
+  .hot { stroke: #0e6f68; }
+  .ioedge { stroke: #a8671a; }
+  .zoom { stroke: #cfd5ce; }
+  text.acc, tspan.acc, text.acc-t { fill: #0e6f68; }
+  text.iot { fill: #a8671a; }
+  .mk { fill: #1b2320; }
+  .mk-hot { fill: #0e6f68; }
+  .mk-io { fill: #a8671a; }
+  .mk-muted { fill: #5c6862; }
+  @media (prefers-color-scheme: dark) {
+  svg { color: #e1e7e3; }
+  .bg { fill: #111614; }
+  text { fill: #e1e7e3; }
+  .small, .lbl, .mut-t { fill: #97a39d; }
+  .box { fill: #182019; stroke: #e1e7e3; }
+  .meta { fill: #212a25; stroke: #e1e7e3; }
+  .bucket, .hotbox { fill: #173532; stroke: #5cc4b6; }
+  .free { stroke: #97a39d; }
+  .io { fill: #33271a; stroke: #e3a650; }
+  .edge { stroke: #e1e7e3; }
+  .thin { stroke: #97a39d; }
+  .hot { stroke: #5cc4b6; }
+  .ioedge { stroke: #e3a650; }
+  .zoom { stroke: #34403a; }
+  text.acc, tspan.acc, text.acc-t { fill: #5cc4b6; }
+  text.iot { fill: #e3a650; }
+  .mk { fill: #e1e7e3; }
+  .mk-hot { fill: #5cc4b6; }
+  .mk-io { fill: #e3a650; }
+  .mk-muted { fill: #97a39d; }
+  }
+</style>
+  <rect class="bg" x="-16" y="-16" width="852" height="324" rx="8"/>
+          <defs>
+            <marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="m2hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="mk-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="m2mu" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="mk-muted" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <!-- key -->
+          <rect class="box" x="16" y="96" width="84" height="40" rx="4"/>
+          <text class="mono" x="58" y="121" text-anchor="middle">"key1"</text>
+          <line class="hot" x1="100" y1="116" x2="134" y2="116" marker-end="url(#m2hot)"/>
+
+          <!-- hash -->
+          <rect class="box" x="136" y="86" width="140" height="60" rx="4"/>
+          <text class="title" x="206" y="110" text-anchor="middle">key_hash</text>
+          <text class="small" x="206" y="130" text-anchor="middle">fnv1a → fmix64</text>
+          <line class="hot" x1="276" y1="116" x2="304" y2="116" marker-end="url(#m2hot)"/>
+
+          <!-- bits -->
+          <rect class="box" x="306" y="96" width="150" height="40" rx="4"/>
+          <text class="mono" x="381" y="121" text-anchor="middle"><tspan class="acc">110</tspan> 1001 0111 …</text>
+          <text class="small" x="381" y="158" text-anchor="middle">top 3 bits → slot 6</text>
+          <text class="lbl" x="381" y="174" text-anchor="middle">global_depth = 3</text>
+
+          <polyline class="hot" points="456,116 478,116 478,229 498,229" marker-end="url(#m2hot)"/>
+
+          <!-- directory -->
+          <text class="lbl" x="532" y="24" text-anchor="middle">directory</text>
+          <text class="lbl" x="532" y="286" text-anchor="middle">in memory</text>
+          <g>
+            <rect class="meta" x="500" y="34"  width="64" height="30"/>
+            <rect class="meta" x="500" y="64"  width="64" height="30"/>
+            <rect class="meta" x="500" y="94"  width="64" height="30"/>
+            <rect class="meta" x="500" y="124" width="64" height="30"/>
+            <rect class="meta" x="500" y="154" width="64" height="30"/>
+            <rect class="meta" x="500" y="184" width="64" height="30"/>
+            <rect class="hotbox" x="500" y="214" width="64" height="30"/>
+            <rect class="meta" x="500" y="244" width="64" height="30"/>
+            <text class="mono" x="532" y="54"  text-anchor="middle">000</text>
+            <text class="mono" x="532" y="84"  text-anchor="middle">001</text>
+            <text class="mono" x="532" y="114" text-anchor="middle">010</text>
+            <text class="mono" x="532" y="144" text-anchor="middle">011</text>
+            <text class="mono" x="532" y="174" text-anchor="middle">100</text>
+            <text class="mono" x="532" y="204" text-anchor="middle">101</text>
+            <text class="mono acc" x="532" y="234" text-anchor="middle">110</text>
+            <text class="mono" x="532" y="264" text-anchor="middle">111</text>
+          </g>
+
+          <!-- slot → bucket pointers -->
+          <line class="thin" x1="564" y1="49"  x2="608" y2="49"  marker-end="url(#m2mu)"/>
+          <line class="thin" x1="564" y1="79"  x2="608" y2="79"  marker-end="url(#m2mu)"/>
+          <line class="thin" x1="564" y1="109" x2="608" y2="109" marker-end="url(#m2mu)"/>
+          <line class="thin" x1="564" y1="139" x2="608" y2="139" marker-end="url(#m2mu)"/>
+          <line class="thin" x1="564" y1="169" x2="608" y2="169" marker-end="url(#m2mu)"/>
+          <line class="thin" x1="564" y1="199" x2="608" y2="199" marker-end="url(#m2mu)"/>
+          <line class="hot"  x1="564" y1="229" x2="608" y2="229" marker-end="url(#m2hot)"/>
+          <line class="thin" x1="564" y1="259" x2="608" y2="259" marker-end="url(#m2mu)"/>
+          <text class="lbl acc-t" x="586" y="222" text-anchor="middle">pread</text>
+
+          <!-- buckets -->
+          <text class="lbl" x="665" y="24" text-anchor="middle">bucket pages · on disk</text>
+          <rect class="bucket" x="610" y="37" width="110" height="114" rx="3"/>
+          <text class="mono" x="665" y="90" text-anchor="middle">page 2</text>
+          <text class="small" x="665" y="107" text-anchor="middle">local depth 1</text>
+          <rect class="bucket" x="610" y="157" width="110" height="54" rx="3"/>
+          <text class="mono" x="665" y="181" text-anchor="middle">page 5</text>
+          <text class="small" x="665" y="198" text-anchor="middle">local depth 2</text>
+          <rect class="hotbox" x="610" y="217" width="110" height="24" rx="3"/>
+          <text class="mono" x="665" y="233" text-anchor="middle">page 6 · d=3</text>
+          <rect class="bucket" x="610" y="247" width="110" height="24" rx="3"/>
+          <text class="mono" x="665" y="263" text-anchor="middle">page 7 · d=3</text>
+
+          <!-- overflow -->
+          <line class="thin dash" x1="720" y1="229" x2="734" y2="229" marker-end="url(#m2mu)"/>
+          <rect class="free" x="736" y="212" width="72" height="34" rx="3"/>
+          <text class="small" x="772" y="233" text-anchor="middle">overflow</text>
+          <text class="lbl" x="772" y="198" text-anchor="middle">if not found</text>
+          <text class="lbl" x="772" y="184" text-anchor="middle">only read</text>
+        </svg>
