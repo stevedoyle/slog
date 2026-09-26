@@ -215,6 +215,14 @@ impl Database {
         self.header.page_size
     }
 
+    /// The options this database was created with.
+    pub fn options(&self) -> CreateOptions {
+        CreateOptions {
+            page_size: self.header.page_size,
+            max_depth: self.header.max_depth,
+        }
+    }
+
     /// The first page of the bucket that `key` belongs in, whether or not
     /// it is present.
     pub fn bucket_of(&self, key: &[u8]) -> u64 {

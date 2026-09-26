@@ -31,6 +31,7 @@ Non-goals, for now:
 | 2 | Replace it with extendible hashing | Done |
 | 3 | Persist to a single file; `rdbm` CLI | Done |
 | 4 | Iterate with `firstkey` and `nextkey` | Done |
+| 5 | Reorganise: rebuild to reclaim space | Done |
 | Later | Large values, locking, buffered writes | Not started |
 
 ## Crate layout
@@ -46,11 +47,13 @@ rdbmtool/
 │   ├── db.rs                   # on-disk extendible hash database
 │   ├── format.rs               # on-disk byte layout: pure encode/decode
 │   ├── pager.rs                # positioned page reads and writes
+│   ├── reorganise.rs           # rebuild a file to reclaim space
 │   └── error.rs                # error type
 ├── tests/
 │   ├── extendible_hashing.rs   # in-memory split, delete, reuse scenarios
 │   ├── disk.rs                 # persistence, overflow, corruption
 │   ├── iteration.rs            # first_key/next_key, mutation mid-iteration
+│   ├── reorganise.rs           # shrinking, failure handling
 │   ├── cli.rs                  # runs the `rdbm` binary
 │   └── support/mod.rs          # temporary file helper
 └── examples/
@@ -65,6 +68,7 @@ Each module in the storage engine does one job, and they depend in one
 direction:
 
 ```text
+main.rs ──► reorganise.rs ──► db.rs   (copy one database into another)
 main.rs ──► db.rs ──► format.rs   (bytes ⇄ structs, no I/O)
               │  └──► pager.rs    (page I/O, no interpretation)
               └─────► hash.rs     (pure functions)
@@ -472,6 +476,55 @@ walk with `next_key` therefore reads each chain about once per key in it.
 `entries()` reads each chain once and sorts its records, so `rdbm list`
 uses it.
 
+### Reorganise
+
+`rdbm::reorganise(path)` (`rdbm reorganise FILE`) rebuilds a database from
+scratch.
+
+**What it reclaims.** Deletes already remove records and compact their page,
+so the rebuild never finds empty slots. The waste it reclaims is structural:
+
+- Buckets never merge. After most keys are deleted, the file keeps its peak
+  bucket count, with most buckets nearly empty.
+- The directory never shrinks, so it stays at its peak global depth.
+- Free pages go on the free list, but the file never gets shorter.
+- Overflow chains built up at max depth stay longer than the remaining
+  records need.
+
+For example, inserting 3,000 keys with 4 KiB pages and then deleting 2,900
+leaves 40 buckets, global depth 6, and 168 KiB. Reorganising gives 2
+buckets, global depth 1, and 16 KiB.
+
+**How it works.**
+
+1. Open the original read-only.
+2. Create `.NAME.reorganise` in the same directory, with the same page size
+   and max depth. It must not already exist.
+3. Insert every record from `entries()`, with per-write sync off.
+4. Check that the number of records read and the new database's count both
+   equal the original's header count. If not, fail, pointing the user to
+   `rdbm check`.
+5. Sync the new file and copy the original's permission bits onto it.
+6. `rename` it over the original, then sync the parent directory so the
+   rename itself is durable.
+
+On any failure the temporary file is removed and the original is unchanged.
+If the temporary file already exists, reorganise fails without touching it:
+another reorganise may be running, or an earlier one was interrupted.
+
+**Crash safety.** The original is never modified. Until the rename, it is
+intact; after the rename, the new file is complete and synced. `rename` is
+atomic on POSIX, so a crash at any point leaves one database or the other,
+never a mix, plus possibly a stale temporary file.
+
+**Concurrency.** Without locking, a process that has the database open
+across a reorganise keeps reading the old file. If it writes, its writes go
+to the old file and are lost. Reorganise when nothing else is using the
+database.
+
+**Determinism.** Records are inserted in iteration order and the hash is
+fixed, so reorganising an already reorganised file produces identical bytes.
+
 ### Durability
 
 By default each mutation calls `sync_data` after writing its pages and
@@ -536,6 +589,7 @@ valid page number.
 | `rdbm nextkey FILE KEY` | Key after KEY in iteration order | The key |
 | `rdbm stats FILE` | Show file statistics | `name=value` per line |
 | `rdbm check FILE` | Verify the file | `ok` |
+| `rdbm reorganise FILE` | Rebuild the file to reclaim space; `reorganize` also works | None |
 
 Results go to stdout, diagnostics to stderr, prefixed `rdbm:`. The exit
 status is 0 on success, 1 if the key was not found, iteration ended, or an
@@ -729,13 +783,31 @@ Integration tests in `tests/iteration.rs` cover:
   after a reopen
 - walking across overflow chains at max depth 0 and 2
 
+Integration tests in `tests/reorganise.rs` cover:
+
+- 3,000 keys inserted and 2,900 deleted: the file shrinks to under a quarter
+  of its size, with fewer buckets, a smaller global depth, no free pages,
+  every remaining key retrievable, and `check` passing
+- the three-key scenario: the file is already minimal, so it does not grow,
+  and the remaining key survives
+- max depth 2: free pages dropped, overflow not increased, page size and max
+  depth preserved
+- reorganising twice produces byte-identical files
+- an emptied database rebuilds to the minimum 3 pages
+- file permissions preserved
+- a header whose entry count disagrees with the buckets: `Error::Corrupt`,
+  with the original byte-identical and no temporary file left
+- an existing temporary file left untouched
+- a missing database
+
 Bulk tests turn per-write sync off and call `sync` once at the end. With it
 on, each insert would cost several milliseconds.
 
 `tests/cli.rs` runs the `rdbm` binary. It covers the create, put, and get
 scenario across separate runs; delete followed by get failing; `list` output;
 `create` options showing in `stats`; a `firstkey`/`nextkey` walk matching
-`list`, including a quiet exit 1 at the end; and the exit status for usage
+`list`, including a quiet exit 1 at the end; `reorganise` keeping the
+remaining keys, printing nothing, and accepting `reorganize`; and the exit status for usage
 errors and other failures.
 
 To see the directory trace:
@@ -762,5 +834,7 @@ Inserting key 10:  global depth=3, buckets=4, directory size=8  <- split
   `sync`, instead of on every mutation.
 - **Crash safety.** A write-ahead log or copy-on-write pages would make each
   mutation atomic.
+- **Reorganise options.** Change the page size or max depth while
+  rebuilding.
 - **Import and export.** A text dump that escapes arbitrary bytes, for
   `rdbm dump` and `rdbm load`.

@@ -154,3 +154,25 @@ fn firstkey_on_empty_database_exits_1() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(stdout(&out), "");
 }
+
+#[test]
+fn reorganise_keeps_remaining_keys() {
+    let tmp = TempPath::new("cli-reorg.db");
+    let db = tmp.path().to_str().unwrap();
+    rdbm(&["create", db]);
+    for (k, v) in [("a", "1"), ("b", "2"), ("c", "3")] {
+        rdbm(&["put", db, k, v]);
+    }
+    rdbm(&["delete", db, "a"]);
+    rdbm(&["delete", db, "c"]);
+
+    let out = rdbm(&["reorganise", db]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "", "silent on success");
+    assert_eq!(stdout(&rdbm(&["get", db, "b"])), "2\n");
+    assert_eq!(rdbm(&["get", db, "a"]).status.code(), Some(1));
+    assert_eq!(stdout(&rdbm(&["check", db])), "ok\n");
+
+    // gdbmtool's spelling works too.
+    assert!(rdbm(&["reorganize", db]).status.success());
+}

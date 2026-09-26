@@ -28,7 +28,8 @@ usage: rdbm create [--page-size N] [--max-depth N] FILE
        rdbm firstkey FILE
        rdbm nextkey FILE KEY
        rdbm stats FILE
-       rdbm check FILE";
+       rdbm check FILE
+       rdbm reorganise FILE";
 
 enum Failure {
     Usage(String),
@@ -130,6 +131,9 @@ fn run(args: &[String]) -> Result<(), Failure> {
             );
             write_line(&[text.as_bytes()])
         }
+        ("reorganise" | "reorganize", [file]) => {
+            rdbm::reorganise(file).map_err(|e| failed(file, e))
+        }
         ("check", [file]) => {
             let db = open_read_only(file)?;
             db.check().map_err(|e| failed(file, e))?;
@@ -137,7 +141,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
         }
         (
             "put" | "get" | "delete" | "firstkey" | "nextkey" | "count" | "list" | "stats"
-            | "check",
+            | "check" | "reorganise" | "reorganize",
             _,
         ) => Err(Failure::Usage(format!(
             "wrong number of arguments to {command}"
