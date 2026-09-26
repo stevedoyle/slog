@@ -9,6 +9,10 @@
 //! rename stays within one filesystem. Until the rename, the original is
 //! untouched; after it, the new file is complete and synced. A crash at any
 //! point leaves one or the other, plus possibly a stale temporary file.
+//!
+//! The original is held under an exclusive lock from before the copy until
+//! after the rename, so no other handle can write to it and lose the write
+//! to the replaced file.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,11 +23,19 @@ use crate::error::{Error, Result};
 /// Rebuilds the database at `path` in place.
 ///
 /// Fails, leaving the original unchanged, if the database cannot be read,
-/// if the temporary file already exists, or if the copy does not hold
-/// exactly the original's records.
+/// if any other handle has it open ([`Error::Locked`]), if the temporary
+/// file already exists, or if the copy does not hold exactly the original's
+/// records.
 pub fn reorganise(path: impl AsRef<Path>) -> Result<()> {
+    reorganise_with(path, false)
+}
+
+/// Like [`reorganise`], but if `wait` is set and another handle has the
+/// database open, waits for it to be closed instead of failing.
+pub fn reorganise_with(path: impl AsRef<Path>, wait: bool) -> Result<()> {
     let path = path.as_ref();
-    let old = Database::open_read_only(path)?;
+    // Held until the function returns, which is after the rename.
+    let old = Database::open_read_only_exclusive(path, wait)?;
     let temp = temp_path(path)?;
     let new = create_temp(&temp, old.options())?;
 

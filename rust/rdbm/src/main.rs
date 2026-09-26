@@ -14,16 +14,20 @@
 //!   key=$(rdbm firstkey db) && while :; do
 //!       echo "$key"; key=$(rdbm nextkey db "$key") || break
 //!   done
+//!
+//! Each command locks the file while it runs: shared for commands that only
+//! read, exclusive for the rest. If another process holds a conflicting
+//! lock, the command fails at once, unless `--wait` asks it to wait.
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::process::ExitCode;
 
-use rdbm::{CreateOptions, Database};
+use rdbm::{CreateOptions, Database, OpenOptions};
 
 const HELP: &str = "\
-usage: rdbm COMMAND [ARGS]
+usage: rdbm [-w | --wait] COMMAND [ARGS]
 
 Commands:
   create [--page-size N] [--max-depth N] FILE
@@ -41,6 +45,8 @@ Commands:
   reorganise FILE    Rebuild the file to reclaim space (also: reorganize)
 
 Options:
+  -w, --wait         If another process has FILE locked, wait for it
+                     instead of failing
   -h, --help         Print this help
   -V, --version      Print the version
 
@@ -78,6 +84,10 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &[OsString]) -> Result<(), Failure> {
+    let (wait, args) = match args.split_first() {
+        Some((first, rest)) if first == "-w" || first == "--wait" => (true, rest),
+        _ => (false, args),
+    };
     let Some((command, rest)) = args.split_first() else {
         return Err(Failure::Usage(String::new()));
     };
@@ -91,13 +101,13 @@ fn run(args: &[OsString]) -> Result<(), Failure> {
         }
         ("create", _) => create(&rest),
         ("put", [file, key, value]) => {
-            let mut db = open(file)?;
+            let mut db = open(file, wait)?;
             db.put(key.as_bytes(), value.as_bytes())
                 .map_err(|e| failed(file, e))?;
             Ok(())
         }
         ("get", [file, key]) => {
-            let db = open_read_only(file)?;
+            let db = open_read_only(file, wait)?;
             let value = db
                 .get(key.as_bytes())
                 .map_err(|e| failed(file, e))?
@@ -105,28 +115,28 @@ fn run(args: &[OsString]) -> Result<(), Failure> {
             write_line(&[&value])
         }
         ("delete", [file, key]) => {
-            let mut db = open(file)?;
+            let mut db = open(file, wait)?;
             db.delete(key.as_bytes())
                 .map_err(|e| failed(file, e))?
                 .ok_or_else(|| not_found(key))?;
             Ok(())
         }
         ("firstkey", [file]) => {
-            let db = open_read_only(file)?;
+            let db = open_read_only(file, wait)?;
             let key = db.first_key().map_err(|e| failed(file, e))?;
             write_line(&[&key.ok_or(Failure::End)?])
         }
         ("nextkey", [file, key]) => {
-            let db = open_read_only(file)?;
+            let db = open_read_only(file, wait)?;
             let next = db.next_key(key.as_bytes()).map_err(|e| failed(file, e))?;
             write_line(&[&next.ok_or(Failure::End)?])
         }
         ("count", [file]) => {
-            let db = open_read_only(file)?;
+            let db = open_read_only(file, wait)?;
             write_line(&[db.len().to_string().as_bytes()])
         }
         ("list", [file]) => {
-            let db = open_read_only(file)?;
+            let db = open_read_only(file, wait)?;
             let mut out = io::stdout().lock();
             for entry in db.entries() {
                 let (key, _) = entry.map_err(|e| failed(file, e))?;
@@ -135,7 +145,7 @@ fn run(args: &[OsString]) -> Result<(), Failure> {
             Ok(())
         }
         ("dump", [file]) => {
-            let db = open_read_only(file)?;
+            let db = open_read_only(file, wait)?;
             let mut out = io::stdout().lock();
             for entry in db.entries() {
                 let (key, value) = entry.map_err(|e| failed(file, e))?;
@@ -144,7 +154,7 @@ fn run(args: &[OsString]) -> Result<(), Failure> {
             Ok(())
         }
         ("stats", [file]) => {
-            let db = open_read_only(file)?;
+            let db = open_read_only(file, wait)?;
             let s = db.stats().map_err(|e| failed(file, e))?;
             // The first lines answer "how big is it, and does it need a
             // reorganise?"; the rest describe the file's structure.
@@ -169,10 +179,10 @@ fn run(args: &[OsString]) -> Result<(), Failure> {
             write_line(&[text.as_bytes()])
         }
         ("reorganise" | "reorganize", [file]) => {
-            rdbm::reorganise(file).map_err(|e| failed(file, e))
+            rdbm::reorganise_with(file, wait).map_err(|e| failed(file, e))
         }
         ("check", [file]) => {
-            let db = open_read_only(file)?;
+            let db = open_read_only(file, wait)?;
             db.check().map_err(|e| failed(file, e))?;
             write_line(&[b"ok"])
         }
@@ -213,16 +223,28 @@ fn number<T: std::str::FromStr>(flag: &str, value: Option<&&OsStr>) -> Result<T,
         .ok_or_else(|| Failure::Usage(format!("{flag} needs a number")))
 }
 
-fn open(file: &OsStr) -> Result<Database, Failure> {
-    Database::open(file).map_err(|e| failed(file, e))
+fn open(file: &OsStr, wait: bool) -> Result<Database, Failure> {
+    let options = OpenOptions {
+        read_only: false,
+        wait,
+    };
+    Database::open_with(file, options).map_err(|e| failed(file, e))
 }
 
-fn open_read_only(file: &OsStr) -> Result<Database, Failure> {
-    Database::open_read_only(file).map_err(|e| failed(file, e))
+fn open_read_only(file: &OsStr, wait: bool) -> Result<Database, Failure> {
+    let options = OpenOptions {
+        read_only: true,
+        wait,
+    };
+    Database::open_with(file, options).map_err(|e| failed(file, e))
 }
 
 fn failed(file: &OsStr, e: rdbm::Error) -> Failure {
-    Failure::Error(format!("{}: {e}", file.display()))
+    let hint = match e {
+        rdbm::Error::Locked => " (use --wait to wait for it)",
+        _ => "",
+    };
+    Failure::Error(format!("{}: {e}{hint}", file.display()))
 }
 
 fn not_found(key: &OsStr) -> Failure {

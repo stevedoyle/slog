@@ -43,6 +43,8 @@ $ rdbm count test.db
 
 `rdbm --help` lists the commands, and `rdbm --version` prints the version.
 
+Each command locks the file while it runs: readers share it, and a writer has it to itself. A command that finds the file locked by another process fails at once; put `--wait` (or `-w`) before the command to wait instead, for example in scripts that run commands in parallel: `rdbm --wait put test.db key3 "value three"`.
+
 Output goes to stdout and errors to stderr, so the commands compose in pipelines, for example `rdbm list test.db | sort`. The exit status is 0 on success, 1 if the key was not found, iteration ended, or an error occurred, and 2 on a usage error.
 
 `stats` shows how big the database is and whether a reorganise would help:
@@ -73,6 +75,7 @@ By default, pages are 4096 bytes and the directory grows to at most 2^24 slots. 
 - **Single-file format.** The file holds a header page, the directory pages, and then bucket, overflow, and free pages. Records within a page are located through a slot array.
 - **Iteration.** Keys come back in a fixed order, sorted by hash and then key bytes, so `nextkey` stays correct even when keys are deleted, inserted, or buckets split during a walk.
 - **Reorganise.** Deletes never merge buckets or shrink the file. `reorganise` copies every record into a fresh file and atomically renames it over the original.
+- **Locking.** Every open handle holds an `flock` lock, shared for readers and exclusive for writers and `reorganise`. A conflicting open fails with `Error::Locked`, or waits if asked to.
 - **Hashing.** Keys are hashed with FNV-1a followed by MurmurHash3's `fmix64` finalizer. The finalizer spreads every input bit into the top bits that the directory uses.
 
 ## Performance

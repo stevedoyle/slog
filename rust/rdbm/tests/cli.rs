@@ -4,6 +4,8 @@ mod support;
 
 use std::collections::BTreeMap;
 use std::process::{Command, Output};
+use std::thread;
+use std::time::Duration;
 
 use rdbm::{CreateOptions, Database};
 use support::TempPath;
@@ -279,7 +281,9 @@ fn thousands_of_keys_via_the_cli() {
         d.sync().unwrap();
     }
 
-    let mut listed: Vec<String> = stdout(&rdbm(&["list", db]))
+    // While `d` was open, other tests spawned processes, and a child shares
+    // the parent's locks until it execs. Wait out any such brief holder.
+    let mut listed: Vec<String> = stdout(&rdbm(&["--wait", "list", db]))
         .lines()
         .map(str::to_owned)
         .collect();
@@ -354,4 +358,44 @@ fn keys_and_values_need_not_be_utf8() {
     let out = run(&[OsStr::new("get"), db, OsStr::from_bytes(b"\xff")]);
     assert_eq!(out.status.code(), Some(1));
     assert!(stderr(&out).contains("not found"), "{}", stderr(&out));
+}
+
+#[test]
+fn cli_fails_on_a_locked_file_unless_asked_to_wait() {
+    let tmp = TempPath::new("cli-locked.db");
+    Database::create(tmp.path(), CreateOptions::default())
+        .unwrap()
+        .put(b"k", b"v")
+        .unwrap();
+    let rdbm = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_rdbm"))
+            .args(args)
+            .arg(tmp.path())
+            .arg("k")
+            .output()
+            .unwrap()
+    };
+
+    let writer = Database::open(tmp.path()).unwrap();
+    let out = rdbm(&["get"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("locked") && stderr.contains("--wait"),
+        "{stderr}"
+    );
+
+    let releaser = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(200));
+        drop(writer);
+    });
+    let out = rdbm(&["--wait", "get"]);
+    releaser.join().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.stdout, b"v\n");
+    assert!(rdbm(&["-w", "delete"]).status.success());
 }

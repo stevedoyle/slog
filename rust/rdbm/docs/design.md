@@ -19,7 +19,9 @@ Goals:
 Non-goals, for now:
 
 - File-format compatibility with GNU gdbm or ndbm.
-- Concurrent access from multiple threads or processes.
+- Concurrent writers. Any number of readers can share a database, but a
+  writer has it to itself; file locks enforce this (see
+  [Locking](#locking)).
 - Crash safety or transactions. Writes are flushed, but a crash in the
   middle of a multi-page update can leave the file inconsistent.
 
@@ -33,7 +35,8 @@ Non-goals, for now:
 | 4 | Iterate with `firstkey` and `nextkey` | Done |
 | 5 | Reorganise: rebuild to reclaim space | Done |
 | 6 | Complete CLI; performance measurements | Done |
-| Later | Large values, locking, buffered writes | Not started |
+| 7 | File locking with `flock` | Done |
+| Later | Large values, buffered writes | Not started |
 
 ## Crate layout
 
@@ -55,6 +58,7 @@ rdbm/
 │   ├── disk.rs                 # persistence, overflow, corruption
 │   ├── iteration.rs            # first_key/next_key, mutation mid-iteration
 │   ├── reorganise.rs           # shrinking, failure handling
+│   ├── locking.rs              # shared and exclusive locks, waiting
 │   ├── cli.rs                  # runs the `rdbm` binary
 │   └── support/mod.rs          # temporary file helper
 └── examples/
@@ -560,10 +564,13 @@ intact; after the rename, the new file is complete and synced. `rename` is
 atomic on POSIX, so a crash at any point leaves one database or the other,
 never a mix, plus possibly a stale temporary file.
 
-**Concurrency.** Without locking, a process that has the database open
-across a reorganise keeps reading the old file. If it writes, its writes go
-to the old file and are lost. Reorganise when nothing else is using the
-database.
+**Concurrency.** Reorganise holds an exclusive lock on the original from
+before the copy until after the rename, so it fails with `Error::Locked` if
+anything else has the database open, and nothing can open it while it runs.
+`reorganise_with(path, true)` (`rdbm --wait reorganise`) waits instead of
+failing. A handle that was waiting for the original when the rename
+happened opens the new file, as described under [Locking](#locking), so no
+write goes to the replaced file.
 
 **Determinism.** Records are inserted in iteration order and the hash is
 fixed, so reorganising an already reorganised file produces identical bytes.
@@ -632,12 +639,50 @@ depths, file length, directory location, and that every directory slot is a
 valid page number. Opening for writing also refuses bytes past the last
 page, so nothing is written to a file an interrupted write has damaged.
 
+### Locking
+
+Every handle holds an `flock` lock on the file for as long as it is open,
+and drops it when the handle is dropped:
+
+| Handle | Lock | Shares the file with |
+|--------|------|----------------------|
+| `Database::open_read_only` | shared | other readers |
+| `Database::open`, `Database::create` | exclusive | nobody |
+| `reorganise` | exclusive, on a read-only descriptor | nobody |
+
+A handle that finds a conflicting lock fails at once with `Error::Locked`,
+as gdbm does, so nothing hangs unless asked to. `Database::open_with` takes
+an `OpenOptions` whose `wait` field makes it block until the lock is free
+instead. Locks come from `std::fs::File::lock`, which is `flock` on Unix, so
+the crate needs no dependencies.
+
+Locks belong to the open file, not the process, so two handles in one
+process conflict just as two processes do: a program cannot hold a reader
+and a writer on the same file at once.
+
+**Opening across a rename.** Reorganise renames a new file over the path
+while holding the old file's lock. A handle that opened the path before the
+rename, and then waited, would get the lock on the old file, and its writes
+would be lost. So after locking, `open` checks that the path still names
+the file it locked, by device and inode number, and starts again if not.
+
+**Caveats.**
+
+- Locks are advisory. They keep rdbm handles apart, but a program that
+  writes the file without taking the lock is not stopped.
+- A process spawned while a handle is open shares that handle's lock until
+  it calls `exec`, because the child inherits the descriptor for that long.
+  Measured on macOS with one thread spawning processes continuously, about
+  one lock request in 2,000 failed for this reason. A child that forks
+  without calling `exec` keeps the lock for as long as it lives.
+- `flock` may not work across machines on network file systems such as NFS.
+
 ### Limitations
 
 - Records larger than one page are rejected. gdbm supports arbitrary sizes;
   that would need a separate kind of large-value page.
-- There is no file locking. Two processes writing the same file at once will
-  corrupt it.
+- One writer at a time. Writers take turns under the file lock rather than
+  sharing the file.
 - Only Unix is supported, because page I/O uses
   `std::os::unix::fs::FileExt`.
 
@@ -662,6 +707,9 @@ page, so nothing is written to a file an interrupted write has damaged.
 | `rdbm --help`, `-h`, `help` | Show usage | Help text |
 | `rdbm --version`, `-V` | Show the version | `rdbm 0.1.0` |
 
+`-w` or `--wait` before the command makes it wait for a lock held by another
+process instead of failing, for example `rdbm --wait put db key value`.
+
 Results go to stdout, diagnostics to stderr, prefixed `rdbm:`. The exit
 status is 0 on success, 1 if the key was not found, iteration ended, or an
 error occurred, and 2 on a usage error. At the end of iteration, `firstkey`
@@ -678,7 +726,13 @@ Arguments are taken as raw bytes, so keys, values, and file names need not
 be UTF-8. They cannot contain a NUL byte, because the operating system
 passes arguments as C strings.
 
-Read-only commands open the file read-only. If the reader closes the pipe,
+Commands that only read open the file read-only, under a shared lock; the
+others take an exclusive lock (see [Locking](#locking)). If another process
+holds a conflicting lock, the command fails with exit status 1 and
+`database is locked by another process (use --wait to wait for it)`. With
+`--wait`, scripts that run commands in parallel take turns instead.
+
+If the reader closes the pipe,
 as in `rdbm list db | head`, rdbm exits quietly. A usage error prints the
 message and the help text to stderr.
 
@@ -978,6 +1032,17 @@ errors and other failures. It also covers:
 - 3,000 keys loaded through the library, then `list` returning each exactly
   once, and `get`, `count`, `check`, and `stats` all agreeing
 - `--help` naming every command, and `--version`
+- a command failing on a file another handle has locked, naming `--wait`,
+  and succeeding with `--wait` once the lock is released
+
+`tests/locking.rs` covers readers sharing a file, a writer excluding readers
+and other writers in both orders, a new database staying locked until its
+handle is dropped, `wait` blocking until release, reorganise failing on and
+then waiting for an open database, and a waiting handle that ends up with
+the new file after a rename over the path. It spawns no processes, since a
+child shares its parent's locks until it execs. For the same reason, the one
+test in `tests/cli.rs` that holds a library handle while other tests spawn
+processes runs its first command with `--wait`.
 
 To see the directory trace:
 
@@ -997,8 +1062,6 @@ Inserting key 10:  global depth=3, buckets=4, directory size=8  <- split
 
 - **Large values.** Store records larger than a page in dedicated pages,
   referenced from the slot.
-- **Locking.** Take an `flock` lock: shared for readers, exclusive for
-  writers.
 - **Buffered writes.** Cache dirty pages and write them in one batch on
   `sync`, instead of on every mutation.
 - **Crash safety.** A write-ahead log or copy-on-write pages would make each

@@ -16,6 +16,9 @@ pub enum Error {
     /// An earlier mutation through this handle failed part way, so the file
     /// may hold some of its writes. Further mutations are refused.
     Poisoned,
+    /// Another handle, in this process or another, holds a lock that
+    /// conflicts with the one this operation needs.
+    Locked,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -30,6 +33,7 @@ impl fmt::Display for Error {
                 "key and value total {size} bytes; at most {max} fit in one page"
             ),
             Error::InvalidOption(msg) => write!(f, "invalid option: {msg}"),
+            Error::Locked => write!(f, "database is locked by another process"),
             Error::Poisoned => write!(
                 f,
                 "an earlier write failed and may have left the file inconsistent; \
