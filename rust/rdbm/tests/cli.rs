@@ -326,3 +326,32 @@ fn help_and_version() {
         );
     }
 }
+
+#[test]
+fn keys_and_values_need_not_be_utf8() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let tmp = TempPath::new("bytes.db");
+    let db = tmp.path().as_os_str();
+    let key = OsStr::from_bytes(b"k\xff");
+    let value = OsStr::from_bytes(b"v\xfex");
+    let run = |args: &[&OsStr]| {
+        Command::new(env!("CARGO_BIN_EXE_rdbm"))
+            .args(args)
+            .output()
+            .expect("failed to run rdbm")
+    };
+
+    assert!(run(&[OsStr::new("create"), db]).status.success());
+    let out = run(&[OsStr::new("put"), db, key, value]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let out = run(&[OsStr::new("get"), db, key]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(out.stdout, b"v\xfex\n");
+    assert_eq!(run(&[OsStr::new("list"), db]).stdout, b"k\xff\n");
+
+    let out = run(&[OsStr::new("get"), db, OsStr::from_bytes(b"\xff")]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("not found"), "{}", stderr(&out));
+}

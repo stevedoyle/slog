@@ -124,6 +124,9 @@ impl HashTable {
     pub fn check_consistency(&self) -> Result<(), String>;
 }
 
+// in rdbm::hashtable
+pub const MAX_DEPTH: u32 = 24;        // deepest the directory grows
+
 // in rdbm::hash
 pub fn key_hash(key: &[u8]) -> u64;   // placement hash
 pub fn fnv1a(bytes: &[u8]) -> u64;    // raw FNV-1a
@@ -227,18 +230,24 @@ One insert can split several times if every entry lands on the same side of
 the new bit. Only the full bucket is ever touched; other buckets are never
 rehashed. Because each entry caches its hash, a split never recomputes one.
 
-Step 2.3 scans the whole directory. That is O(directory) per split, which is
-simple and cheap in memory. The block's start and length could be computed
-directly if this becomes a hotspot on disk.
+Step 2.3 computes the block directly: it holds `2^(global_depth − d)` slots
+and starts at `prefix(hash, d)` times that. A split therefore touches only
+the bucket's own slots, not the whole directory, as the on-disk version also
+does.
 
 ### Overflow
 
 If every entry in a full bucket, plus the incoming key, has the same 64-bit
-hash, no bit can separate them and splitting would never end. In that case,
-or when `local_depth` has reached 64, the entry is appended anyway and the
-bucket exceeds its capacity. Since `fmix64` is a bijection, this requires a
-64-bit FNV-1a collision among more than `bucket_capacity` keys, which in
-practice does not happen.
+hash, no bit can separate them and splitting would never end. In that case
+the entry is appended anyway and the bucket exceeds its capacity. Since
+`fmix64` is a bijection, this requires a 64-bit FNV-1a collision among more
+than `bucket_capacity` keys, which in practice does not happen.
+
+The same happens when `local_depth` has reached `MAX_DEPTH`, 24, where the
+directory has 2^24 slots (128 MiB). Without this cap, a few keys sharing a
+long hash prefix double the directory once per shared bit. That is likely,
+not just adversarial, when buckets are small: with a capacity of 1, 4,000
+random keys drove the directory to 2^24 slots, and 16,000 exhausted memory.
 
 ### Delete
 
@@ -262,8 +271,9 @@ buckets.
   - every entry's cached hash equals `key_hash(key)`
   - every entry's `prefix(hash, d)` matches the bucket's block
   - no key appears twice
-  - it holds at most `bucket_capacity` entries, unless it is overflowing with
-    identical hashes
+  - `d <= MAX_DEPTH`
+  - it holds at most `bucket_capacity` entries, unless it is at `MAX_DEPTH`
+    or every entry has the same hash
 - The bucket sizes add up to `len`.
 
 ### Complexity
@@ -274,7 +284,7 @@ With `n` keys, bucket capacity `b`, and directory size `D`:
 |-----------|---------|------------|
 | `get` | O(b) | O(b), or O(n) in an overflowing bucket |
 | `put`, no split | O(b) | O(b) |
-| `put`, split | O(b + D) | O(64 · (b + D)): one split per shared hash bit |
+| `put`, split | O(b + D / 2^d), plus O(D) if the directory doubles | O(24 · (b + D)): one split, and at most one doubling, per shared hash bit |
 | `delete` | O(b) | O(b) |
 | `iter` | O(n + buckets) | O(n + buckets) |
 
@@ -310,14 +320,18 @@ other pages     bucket, overflow, and free pages, in any order
 ```
 
 A new database has 3 pages: the header, a one-slot directory, and one empty
-bucket. The file length is always exactly `page_count × page_size`, and
-opening a file whose length disagrees fails.
+bucket. After every completed mutation the file length is exactly
+`page_count × page_size`. A shorter file fails to open. A longer one is what
+an interrupted write leaves behind: it opens read-only, so that `check` can
+examine it and `reorganise` can rebuild it, but not for writing.
 
 ![An eight-page file: the header points to the free list; the directory maps slots to bucket pages; one bucket has an overflow page; a bucket page expanded to show its header, slots growing forward, and records packed from the end](assets/file-layout.svg)
 
 An eight-page file with max depth 2. Bucket page 5 is at the max depth, so
 it has grown an overflow page instead of splitting. Pages 4 and 7 form the
-free list.
+free list. For simplicity the directory is drawn at page 1; since rdbm moves
+the directory to new pages whenever it doubles, a real file this deep would
+have it further along.
 
 #### Header
 
@@ -428,15 +442,26 @@ through on every change. Bucket pages are never cached.
   which may free overflow pages. Buckets are never merged and the directory
   never shrinks, as in gdbm.
 
-A split writes, in this order: the directory, if it doubled; the new bucket;
-the directory slots that now point at it; and the old bucket without the
-moved records.
+A split writes, in this order:
+
+1. If the directory doubled: the doubled directory, to new pages, then the
+   header, which switches to it.
+2. The new bucket, then the header, which now counts the bucket's pages.
+3. The directory slots that now point at the new bucket.
+4. The old bucket, without the moved records.
+
+Each step leaves a file that opens. Until step 3, nothing refers to the new
+pages, so a crash leaves them unreferenced, and `check` reports it. Between
+steps 3 and 4 the moved records are in both buckets, so reads still find
+them, and `check` reports the duplicates.
 
 ![The put loop: load the chain; if the records fit in one page, store the chain and commit; otherwise split and retry if the bucket can split, or add an overflow page if it cannot](assets/put-loop.svg)
 
-When the doubled directory no longer fits in its pages, it is written to new
-pages at the end of the file, the header is updated to point at it, and the
-old directory pages go on the free list.
+A doubled directory is always written to new pages at the end of the file,
+even when it would fit in its old pages. Only then does the header switch to
+it, and the old directory pages go on the free list. Rewriting it in place
+would leave a window where the header's depth and the directory disagree, so
+that a crash there would make lookups silently miss keys.
 
 Every mutation ends by writing the header, which holds the entry count, page
 count, and free list head.
@@ -516,7 +541,8 @@ buckets, global depth 1, and 16 KiB.
 
 1. Open the original read-only.
 2. Create `.NAME.reorganise` in the same directory, with the same page size
-   and max depth. It must not already exist.
+   and max depth. It must not already exist. It is created readable only by
+   its owner, so a private database is never exposed while it is copied.
 3. Insert every record from `entries()`, with per-write sync off.
 4. Check that the number of records read and the new database's count both
    equal the original's header count. If not, fail, pointing the user to
@@ -559,8 +585,31 @@ Measured on macOS, where `sync_data` does a full flush to the physical disk
 | `set_sync(false)` | ~15 µs |
 
 Neither mode is crash-atomic. A crash in the middle of a multi-page write,
-such as a split, can leave the file inconsistent. `check` detects most such
-damage, but nothing repairs it yet.
+such as a split, can leave the file inconsistent. The writes are ordered so
+that after a process crash at any point, the file still opens read-only and
+`check` either reports the damage or finds contents from just before or just
+after the interrupted operation. A test cuts off writes at every point of a
+workload of splits, doublings, deletes, and overflow chains to verify this.
+While every bucket is one page, lookups of keys the interrupted operation
+did not touch also stay correct. Rewriting a chain of several pages in place
+can lose a record, which `check` detects. When `check` reports only bytes
+past the last page, `reorganise` rebuilds the file without them. Nothing
+repairs other damage yet.
+
+These guarantees cover a process crash, where every completed write reaches
+the operating system. After a power failure or OS crash the disk may hold
+any subset of the writes since the last sync, and `check` may not see the
+damage.
+
+**Failed writes.** A `put` or `delete` that fails part way, for example on a
+full disk, can leave some of its pages written, just as a crash would, and
+leaves the header and directory in memory out of step with the file. The
+entry count changes only once the bucket is stored, so `len` still reports
+the last value written. To stop a later commit from recording the rest, the
+handle is poisoned: every further `put` or `delete` returns
+`Error::Poisoned`. Reads still work. Reopen the file and run `check` before
+writing again. A `put` rejected with `Error::TooLarge` writes nothing and
+does not poison the handle.
 
 ### Consistency check
 
@@ -576,10 +625,12 @@ damage, but nothing repairs it yet.
   bucket, and no key appears twice
 - no bucket has overflow pages when it could have split instead
 - the header's entry count matches the records
+- the file has no bytes past the header's last page
 
 Opening a database checks less but costs less: the magic, version, page size,
 depths, file length, directory location, and that every directory slot is a
-valid page number.
+valid page number. Opening for writing also refuses bytes past the last
+page, so nothing is written to a file an interrupted write has damaged.
 
 ### Limitations
 
@@ -622,6 +673,10 @@ key=$(rdbm firstkey db) && while :; do
     echo "$key"; key=$(rdbm nextkey db "$key") || break
 done
 ```
+
+Arguments are taken as raw bytes, so keys, values, and file names need not
+be UTF-8. They cannot contain a NUL byte, because the operating system
+passes arguments as C strings.
 
 Read-only commands open the file read-only. If the reader closes the pipe,
 as in `rdbm list db | head`, rdbm exits quietly. A usage error prints the

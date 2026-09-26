@@ -15,7 +15,9 @@
 //!       echo "$key"; key=$(rdbm nextkey db "$key") || break
 //!   done
 
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::process::ExitCode;
 
 use rdbm::{CreateOptions, Database};
@@ -56,7 +58,8 @@ enum Failure {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Arguments are raw bytes: keys, values, and file names need not be UTF-8.
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(Failure::Usage(msg)) => {
@@ -74,12 +77,14 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(args: &[String]) -> Result<(), Failure> {
+fn run(args: &[OsString]) -> Result<(), Failure> {
     let Some((command, rest)) = args.split_first() else {
         return Err(Failure::Usage(String::new()));
     };
-    let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
-    match (command.as_str(), rest.as_slice()) {
+    let rest: Vec<&OsStr> = rest.iter().map(OsString::as_os_str).collect();
+    // A command that is not UTF-8 matches no arm and is reported as unknown.
+    let command = command.to_string_lossy();
+    match (command.as_ref(), rest.as_slice()) {
         ("-h" | "--help" | "help", []) => write_line(&[HELP.as_bytes()]),
         ("-V" | "--version", []) => {
             write_line(&[concat!("rdbm ", env!("CARGO_PKG_VERSION")).as_bytes()])
@@ -96,14 +101,14 @@ fn run(args: &[String]) -> Result<(), Failure> {
             let value = db
                 .get(key.as_bytes())
                 .map_err(|e| failed(file, e))?
-                .ok_or_else(|| Failure::NotFound(format!("{key}: not found")))?;
+                .ok_or_else(|| not_found(key))?;
             write_line(&[&value])
         }
         ("delete", [file, key]) => {
             let mut db = open(file)?;
             db.delete(key.as_bytes())
                 .map_err(|e| failed(file, e))?
-                .ok_or_else(|| Failure::NotFound(format!("{key}: not found")))?;
+                .ok_or_else(|| not_found(key))?;
             Ok(())
         }
         ("firstkey", [file]) => {
@@ -182,16 +187,16 @@ fn run(args: &[String]) -> Result<(), Failure> {
     }
 }
 
-fn create(args: &[&str]) -> Result<(), Failure> {
+fn create(args: &[&OsStr]) -> Result<(), Failure> {
     let mut options = CreateOptions::default();
     let mut file = None;
     let mut args = args.iter();
     while let Some(&arg) = args.next() {
-        match arg {
-            "--page-size" => options.page_size = number(arg, args.next())?,
-            "--max-depth" => options.max_depth = number(arg, args.next())?,
-            _ if arg.starts_with("--") => {
-                return Err(Failure::Usage(format!("unknown option: {arg}")));
+        match arg.to_str() {
+            Some(flag @ "--page-size") => options.page_size = number(flag, args.next())?,
+            Some(flag @ "--max-depth") => options.max_depth = number(flag, args.next())?,
+            _ if arg.as_bytes().starts_with(b"--") => {
+                return Err(Failure::Usage(format!("unknown option: {}", arg.display())));
             }
             _ if file.is_none() => file = Some(arg),
             _ => return Err(Failure::Usage("create takes one FILE".into())),
@@ -202,22 +207,26 @@ fn create(args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
-fn number<T: std::str::FromStr>(flag: &str, value: Option<&&str>) -> Result<T, Failure> {
+fn number<T: std::str::FromStr>(flag: &str, value: Option<&&OsStr>) -> Result<T, Failure> {
     value
-        .and_then(|v| v.parse().ok())
+        .and_then(|v| v.to_str()?.parse().ok())
         .ok_or_else(|| Failure::Usage(format!("{flag} needs a number")))
 }
 
-fn open(file: &str) -> Result<Database, Failure> {
+fn open(file: &OsStr) -> Result<Database, Failure> {
     Database::open(file).map_err(|e| failed(file, e))
 }
 
-fn open_read_only(file: &str) -> Result<Database, Failure> {
+fn open_read_only(file: &OsStr) -> Result<Database, Failure> {
     Database::open_read_only(file).map_err(|e| failed(file, e))
 }
 
-fn failed(file: &str, e: rdbm::Error) -> Failure {
-    Failure::Error(format!("{file}: {e}"))
+fn failed(file: &OsStr, e: rdbm::Error) -> Failure {
+    Failure::Error(format!("{}: {e}", file.display()))
+}
+
+fn not_found(key: &OsStr) -> Failure {
+    Failure::NotFound(format!("{}: not found", key.display()))
 }
 
 fn write_line(parts: &[&[u8]]) -> Result<(), Failure> {
