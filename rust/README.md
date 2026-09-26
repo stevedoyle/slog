@@ -11,3 +11,7 @@ Network packet processing including pcap file processing.
 SHAKE XOF experiment to check on usage of squeeze functions.
 
 - [shake-xof](./shake-xof/)
+
+A dbm-style key-value store built on extendible hashing and stored in a single paged file, with a `gdbmtool`-like CLI.
+
+- [rdbm](./rdbm/)
