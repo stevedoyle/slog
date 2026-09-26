@@ -38,7 +38,7 @@ Non-goals, for now:
 ## Crate layout
 
 ```text
-rdbmtool/
+rdbm/
 ├── Cargo.toml                  # package "rdbm": library + `rdbm` binary
 ├── src/
 │   ├── lib.rs                  # re-exports the public API
@@ -740,7 +740,7 @@ $ xxd -a hex.db
 00000420: b230 2761 6106 6ad8 e601 0400 0900 0000  .0'aa.j.........
 00000430: 0000 0000 0000 0000 0000 0000 0000 0000  ................
 *
-000005e0: 0000 0000 0000 6b65 7932 7661 6c75 6520  ......key2value 
+000005e0: 0000 0000 0000 6b65 7932 7661 6c75 6520  ......key2value
 000005f0: 7477 6f6b 6579 3176 616c 7565 206f 6e65  twokey1value one
 ```
 
