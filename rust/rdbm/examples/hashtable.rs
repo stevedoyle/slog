@@ -7,6 +7,7 @@
 //!   delete KEY      remove KEY, or report "not found" on stderr
 //!   count           print the number of entries
 //!   list            print every "KEY VALUE" pair, sorted by key
+//!   stats           print global depth, bucket count, and directory size
 //!
 //! Example:
 //!   printf 'put a 1\nget a\ndelete a\ncount\n' | cargo run -q --example hashtable
@@ -69,6 +70,14 @@ fn run(table: &mut HashTable, line: &str, out: &mut impl Write) -> Result<(), St
                 .ok_or(format!("{rest}: not found"))?;
         }
         "count" => writeln!(out, "{}", table.len()).map_err(io_err)?,
+        "stats" => writeln!(
+            out,
+            "global depth={}, buckets={}, directory size={}",
+            table.global_depth(),
+            table.bucket_count(),
+            table.directory_len()
+        )
+        .map_err(io_err)?,
         "list" => {
             let mut pairs: Vec<_> = table.iter().collect();
             pairs.sort_unstable();
