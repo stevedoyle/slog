@@ -265,6 +265,36 @@ fn open_rejects_truncated_file() {
 }
 
 #[test]
+fn bytes_left_by_an_interrupted_write_can_be_checked_and_reorganised() {
+    let tmp = TempPath::new("trailing.db");
+    drop(populated(&tmp, small_pages(24), 50));
+    // A crash after a page was added at the end, before the header counted it.
+    let len = fs::metadata(tmp.path()).unwrap().len();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(tmp.path())
+        .unwrap()
+        .set_len(len + 512)
+        .unwrap();
+
+    let err = Database::open(tmp.path()).unwrap_err();
+    assert!(err.to_string().contains("interrupted write"), "{err}");
+    let db = Database::open_read_only(tmp.path()).unwrap();
+    assert_eq!(db.get(&key(7)).unwrap(), Some(value(7)));
+    let err = db.check().unwrap_err();
+    assert!(
+        err.to_string().contains("512 bytes past the last page"),
+        "{err}"
+    );
+    drop(db);
+
+    rdbm::reorganise(tmp.path()).unwrap();
+    let db = Database::open(tmp.path()).unwrap();
+    db.check().unwrap();
+    assert_eq!(db.len(), 50);
+}
+
+#[test]
 fn check_detects_a_corrupted_record() {
     let tmp = TempPath::new("corrupt.db");
     {

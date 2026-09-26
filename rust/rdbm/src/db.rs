@@ -161,16 +161,22 @@ impl Database {
     }
 
     /// Opens an existing database for reading and writing.
+    ///
+    /// Refuses a file with bytes past the header's last page, which an
+    /// interrupted write leaves behind: run [`Database::check`] on it first.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_file(OpenOptions::new().read(true).write(true).open(path)?)
+        Self::open_file(OpenOptions::new().read(true).write(true).open(path)?, true)
     }
 
     /// Opens an existing database for reading only. Mutations will fail.
+    ///
+    /// Accepts bytes past the header's last page, so that a file damaged by
+    /// an interrupted write can still be checked, read, and reorganised.
     pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_file(File::open(path)?)
+        Self::open_file(File::open(path)?, false)
     }
 
-    fn open_file(file: File) -> Result<Self> {
+    fn open_file(file: File, writable: bool) -> Result<Self> {
         let mut buf = [0u8; HEADER_LEN];
         match std::os::unix::fs::FileExt::read_exact_at(&file, &mut buf, 0) {
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
@@ -181,12 +187,21 @@ impl Database {
         let header = Header::decode(&buf)?;
         let pager = Pager::new(file, header.page_size);
 
-        let expected_len = header.page_count.checked_mul(u64::from(header.page_size));
+        let Some(expected_len) = header.page_count.checked_mul(u64::from(header.page_size)) else {
+            return corrupt(format!("page count {} is out of range", header.page_count));
+        };
         let actual_len = pager.file_len()?;
-        if expected_len != Some(actual_len) {
+        if actual_len < expected_len {
             return corrupt(format!(
                 "file is {actual_len} bytes, header says {} pages of {}",
                 header.page_count, header.page_size
+            ));
+        }
+        if writable && actual_len > expected_len {
+            return corrupt(format!(
+                "{} bytes past the last page, left by an interrupted write; \
+                 run `rdbm check`, then `rdbm reorganise` if it finds nothing else",
+                actual_len - expected_len
             ));
         }
         let slots = 1usize << header.global_depth;
@@ -519,6 +534,16 @@ impl Database {
         if let Some(p) = owner.iter().position(Option::is_none) {
             return corrupt(format!("page {p} is not referenced by anything"));
         }
+        let extra = self
+            .pager
+            .file_len()?
+            .saturating_sub(h.page_count * u64::from(h.page_size));
+        if extra > 0 {
+            return corrupt(format!(
+                "{extra} bytes past the last page, left by an interrupted write; \
+                 the rest of the file is intact, so `rdbm reorganise` will remove them"
+            ));
+        }
         Ok(())
     }
 
@@ -640,6 +665,9 @@ impl Database {
             .into_iter()
             .partition(|r| bit(r.hash, d.into()));
         let new_page = self.store_chain(Vec::new(), d + 1, moved)?;
+        // Count the new bucket's pages before anything points at them, so a
+        // crash from here on leaves them inside the file the header knows.
+        self.write_header()?;
 
         // The bucket's slots form one aligned run; the upper half (next hash
         // bit set) now points at the new bucket.
@@ -664,16 +692,14 @@ impl Database {
         Ok(self.pager.write_page(self.header.dir_page, &bytes)?)
     }
 
-    /// Doubles the directory, moving it to the end of the file when it
-    /// outgrows its pages. The old pages go on the free list.
+    /// Doubles the directory. The doubled copy is written to new pages at
+    /// the end of the file, and only then does the header switch to it, so
+    /// a crash leaves the old directory or the new one, never a mix. The old
+    /// pages go on the free list.
     fn double_directory(&mut self) -> Result<()> {
         self.directory = self.directory.iter().flat_map(|&p| [p, p]).collect();
         self.header.global_depth += 1;
         let needed = format::directory_pages(self.directory.len(), self.header.page_size);
-        if needed <= self.header.dir_pages {
-            return self.write_directory();
-        }
-
         let old = self.header.dir_page..self.header.dir_page + self.header.dir_pages;
         self.header.dir_page = self.header.page_count;
         self.header.dir_pages = needed;
@@ -779,5 +805,135 @@ impl Iterator for Entries<'_> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    enum Op {
+        Put(Vec<u8>, Vec<u8>),
+        Delete(Vec<u8>),
+    }
+
+    /// Enough puts to split and double the directory several times, then
+    /// deletes and puts that free and reuse pages.
+    fn workload() -> Vec<Op> {
+        let key = |i: usize| format!("key{i}").into_bytes();
+        let mut ops: Vec<Op> = (0..150)
+            .map(|i| Op::Put(key(i), format!("value {i}").into_bytes()))
+            .collect();
+        ops.extend((0..150).step_by(3).map(|i| Op::Delete(key(i))));
+        ops.extend((150..200).map(|i| Op::Put(key(i), vec![b'x'; 40])));
+        ops
+    }
+
+    fn apply(model: &mut BTreeMap<Vec<u8>, Vec<u8>>, op: &Op) {
+        match op {
+            Op::Put(k, v) => model.insert(k.clone(), v.clone()),
+            Op::Delete(k) => model.remove(k),
+        };
+    }
+
+    /// Runs `ops` until the `budget`th write fails. Returns the model of
+    /// every completed op and the op that was cut short, if any.
+    fn run_until_crash(
+        path: &Path,
+        options: CreateOptions,
+        ops: &[Op],
+        budget: usize,
+    ) -> (BTreeMap<Vec<u8>, Vec<u8>>, Option<usize>) {
+        let mut db = Database::create(path, options).unwrap();
+        db.set_sync(false);
+        db.pager.writes_left.set(Some(budget));
+        let mut model = BTreeMap::new();
+        for (i, op) in ops.iter().enumerate() {
+            let result = match op {
+                Op::Put(k, v) => db.put(k, v).map(drop),
+                Op::Delete(k) => db.delete(k).map(drop),
+            };
+            if result.is_err() {
+                return (model, Some(i));
+            }
+            apply(&mut model, op);
+        }
+        (model, None)
+    }
+
+    /// Simulates a crash at every write of the workload. After each, the
+    /// file must open read-only, and `check` must either report damage or
+    /// pass with the contents from just before or just after the cut op.
+    ///
+    /// With `reads_survive`, every key the cut op did not touch must also
+    /// still read back correctly, or fail loudly, even when `check` reports
+    /// damage. That holds only while each bucket is one page: rewriting a
+    /// chain of several pages in place can lose a record to a crash.
+    fn crash_at_every_write(options: CreateOptions, reads_survive: bool) {
+        let path = std::env::temp_dir().join(format!(
+            "rdbm-crash-{}-{}.db",
+            std::process::id(),
+            options.max_depth
+        ));
+        let ops = workload();
+        let (mut detected, mut clean) = (0, 0);
+        for budget in 0.. {
+            let _ = fs::remove_file(&path);
+            let (before, cut) = run_until_crash(&path, options, &ops, budget);
+            let Some(cut) = cut else { break };
+            let mut after = before.clone();
+            apply(&mut after, &ops[cut]);
+
+            let db = Database::open_read_only(&path)
+                .unwrap_or_else(|e| panic!("write {budget}: open failed: {e}"));
+            match db.check() {
+                Ok(()) => {
+                    let found: BTreeMap<_, _> = db.entries().map(Result::unwrap).collect();
+                    assert!(
+                        found == before || found == after,
+                        "write {budget}: check passed but contents are wrong"
+                    );
+                    clean += 1;
+                }
+                Err(Error::Corrupt(_)) => detected += 1,
+                Err(e) => panic!("write {budget}: check failed with {e}"),
+            }
+            if reads_survive {
+                let (Op::Put(touched, _) | Op::Delete(touched)) = &ops[cut];
+                for (k, v) in before.iter().filter(|(k, _)| *k != touched) {
+                    if let Ok(found) = db.get(k) {
+                        assert_eq!(found.as_ref(), Some(v), "write {budget}: silent wrong read");
+                    }
+                }
+            }
+        }
+        let _ = fs::remove_file(&path);
+        assert!(
+            detected > 0 && clean > 0,
+            "{detected} detected, {clean} clean"
+        );
+    }
+
+    #[test]
+    fn a_crash_at_any_write_is_detected_or_harmless() {
+        crash_at_every_write(
+            CreateOptions {
+                page_size: 512,
+                max_depth: 24,
+            },
+            true,
+        );
+    }
+
+    #[test]
+    fn a_crash_at_any_write_is_detected_or_harmless_with_overflow_chains() {
+        crash_at_every_write(
+            CreateOptions {
+                page_size: 512,
+                max_depth: 2,
+            },
+            false,
+        );
     }
 }

@@ -10,6 +10,10 @@ use std::os::unix::fs::FileExt;
 pub struct Pager {
     file: File,
     page_size: u64,
+    /// Tests set this to simulate a crash: once it reaches zero, every
+    /// write fails, as though the process had died.
+    #[cfg(test)]
+    pub writes_left: std::cell::Cell<Option<usize>>,
 }
 
 impl Pager {
@@ -17,6 +21,8 @@ impl Pager {
         Self {
             file,
             page_size: u64::from(page_size),
+            #[cfg(test)]
+            writes_left: std::cell::Cell::new(None),
         }
     }
 
@@ -37,6 +43,13 @@ impl Pager {
 
     /// Writes `bytes` starting at byte `offset` within page `page`.
     pub fn write_at(&self, page: u64, offset: u64, bytes: &[u8]) -> io::Result<()> {
+        #[cfg(test)]
+        if let Some(n) = self.writes_left.get() {
+            if n == 0 {
+                return Err(io::Error::other("simulated crash"));
+            }
+            self.writes_left.set(Some(n - 1));
+        }
         self.file
             .write_all_at(bytes, page * self.page_size + offset)
     }

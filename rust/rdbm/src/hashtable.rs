@@ -10,12 +10,18 @@
 //! depth grows by one and its entries are divided by the next hash bit. If the
 //! local depth already equals the global depth, the directory doubles first.
 //! No other bucket is touched, so the table never rehashes everything at once.
+//!
+//! A bucket at the maximum depth, or whose entries all share one hash, cannot
+//! usefully split, so it grows past its capacity instead.
 
 use std::num::NonZeroUsize;
 
-use crate::hash::{HASH_BITS, bit, key_hash, prefix};
+use crate::hash::{bit, key_hash, prefix};
 
 const DEFAULT_BUCKET_CAPACITY: usize = 32;
+/// The deepest the directory may grow: 2^24 slots, 128 MiB. Without a cap, a
+/// few keys sharing a long hash prefix would double it until memory ran out.
+pub const MAX_DEPTH: u32 = 24;
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -45,6 +51,8 @@ pub struct HashTable {
     /// Buckets by id. A split appends the new bucket, so ids are stable.
     buckets: Vec<Bucket>,
     global_depth: u32,
+    /// [`MAX_DEPTH`], except in tests that need a shallow cap.
+    max_depth: u32,
     bucket_capacity: usize,
     len: usize,
 }
@@ -71,6 +79,7 @@ impl HashTable {
                 entries: Vec::new(),
             }],
             global_depth: 0,
+            max_depth: MAX_DEPTH,
             bucket_capacity: capacity.get(),
             len: 0,
         }
@@ -120,7 +129,7 @@ impl HashTable {
 
         let mut id = id;
         while self.buckets[id].entries.len() >= self.bucket_capacity && self.can_split(id, hash) {
-            self.split(id);
+            self.split(id, hash);
             id = self.bucket_id(hash);
         }
         self.buckets[id].entries.push(Entry {
@@ -162,14 +171,16 @@ impl HashTable {
     }
 
     /// Splitting helps only if some entry's hash differs from the incoming one.
-    /// If every hash is identical, no bit can separate them, so the bucket is
-    /// allowed to exceed its capacity instead.
+    /// If every hash is identical, no bit can separate them, and at the
+    /// maximum depth the directory may not double again. Either way the bucket
+    /// is allowed to exceed its capacity instead.
     fn can_split(&self, id: usize, hash: u64) -> bool {
         let bucket = &self.buckets[id];
-        bucket.local_depth < HASH_BITS && bucket.entries.iter().any(|e| e.hash != hash)
+        bucket.local_depth < self.max_depth && bucket.entries.iter().any(|e| e.hash != hash)
     }
 
-    fn split(&mut self, id: usize) {
+    /// Splits bucket `id`, which `hash` maps to.
+    fn split(&mut self, id: usize, hash: u64) {
         let depth = self.buckets[id].local_depth;
         if depth == self.global_depth {
             self.double_directory();
@@ -187,14 +198,12 @@ impl HashTable {
             entries: moved,
         });
 
-        // The slots pointing at `id` form one aligned block; its upper half
-        // (next hash bit set) now points at the new bucket.
-        let shift = self.global_depth - (depth + 1);
-        for (slot, target) in self.directory.iter_mut().enumerate() {
-            if *target == id && (slot >> shift) & 1 == 1 {
-                *target = new_id;
-            }
-        }
+        // The slots pointing at `id` form one aligned block, found from the
+        // hash's prefix; its upper half (next hash bit set) now points at the
+        // new bucket.
+        let run = 1usize << (self.global_depth - depth);
+        let start = prefix(hash, depth) * run;
+        self.directory[start + run / 2..start + run].fill(new_id);
     }
 
     /// Doubles the directory. With most-significant-bit indexing, old slot `i`
@@ -253,8 +262,13 @@ impl HashTable {
             let Some(p) = block[id] else {
                 return Err(format!("bucket {id} is unreachable"));
             };
+            if d > self.max_depth {
+                return Err(format!("bucket {id} is deeper than the maximum depth"));
+            }
             let overflowing = bucket.entries.len() > self.bucket_capacity;
-            if overflowing && bucket.entries.windows(2).any(|w| w[0].hash != w[1].hash) {
+            let splittable =
+                d < self.max_depth && bucket.entries.windows(2).any(|w| w[0].hash != w[1].hash);
+            if overflowing && splittable {
                 return Err(format!("bucket {id} is over capacity but could split"));
             }
             for (i, e) in bucket.entries.iter().enumerate() {
@@ -373,12 +387,18 @@ mod tests {
             t.put(&i.to_le_bytes(), b"");
             i += 1;
         }
-        let shallow = (0..t.bucket_count())
-            .find(|&id| t.buckets[id].local_depth < t.global_depth)
+        let (slot, shallow) = t
+            .directory
+            .iter()
+            .copied()
+            .enumerate()
+            .find(|&(_, id)| t.buckets[id].local_depth < t.global_depth)
             .unwrap();
+        // A hash whose top bits are that slot maps to the shallow bucket.
+        let hash = (slot as u64) << (u64::BITS - t.global_depth);
         let depth_before = t.global_depth();
         let dir_before = t.directory_len();
-        t.split(shallow);
+        t.split(shallow, hash);
         assert_eq!(t.global_depth(), depth_before);
         assert_eq!(t.directory_len(), dir_before);
         t.check_consistency().unwrap();
@@ -418,6 +438,32 @@ mod tests {
         t.len = 1;
         assert!(!t.can_split(0, hash));
         assert!(t.can_split(0, !hash));
+    }
+
+    #[test]
+    fn directory_stops_doubling_at_the_maximum_depth() {
+        let mut t = tiny(1);
+        t.max_depth = 4;
+        for i in 0..200u32 {
+            t.put(&i.to_le_bytes(), &i.to_le_bytes());
+        }
+        assert_eq!(t.global_depth(), 4);
+        assert_eq!(t.directory_len(), 16);
+        t.check_consistency().unwrap();
+        for i in 0..200u32 {
+            assert_eq!(t.get(&i.to_le_bytes()), Some(&i.to_le_bytes()[..]));
+        }
+    }
+
+    #[test]
+    fn consistency_check_rejects_an_overfull_bucket_below_the_maximum_depth() {
+        let mut t = tiny(1);
+        t.max_depth = 4;
+        for i in 0..200u32 {
+            t.put(&i.to_le_bytes(), b"");
+        }
+        t.max_depth = 5;
+        assert!(t.check_consistency().is_err());
     }
 
     #[test]
