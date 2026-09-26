@@ -1,0 +1,9 @@
+[package]
+name = "counter-mode-kdf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hex = "0.4.3"
+openssl = "0.10.75"
+openssl-kdf = { version = "0.4.2", features = ["allow_custom"] }

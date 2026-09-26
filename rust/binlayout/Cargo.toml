@@ -1,0 +1,8 @@
+[package]
+name = "binlayout"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bin-layout = { version = "7.1.0" }
+hexdump = "0.1.2"
