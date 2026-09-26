@@ -16,6 +16,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::mem;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use crate::error::{Error, Result};
@@ -76,6 +77,9 @@ pub struct Database {
     header: Header,
     directory: Vec<u64>,
     sync: bool,
+    /// Set when a mutation fails part way. Its partial changes to the header
+    /// and directory stay in memory, so writing again could record them.
+    poisoned: bool,
 }
 
 /// A bucket's pages as read from disk, with its records gathered together.
@@ -98,6 +102,16 @@ fn corrupt<T>(msg: impl Into<String>) -> Result<T> {
 impl Database {
     /// Creates a new database file. Fails if `path` already exists.
     pub fn create(path: impl AsRef<Path>, options: CreateOptions) -> Result<Self> {
+        Self::create_with_mode(path, options, 0o666)
+    }
+
+    /// Like [`Database::create`], but the file's permission bits are `mode`
+    /// less the umask, rather than `0o666` less the umask.
+    pub(crate) fn create_with_mode(
+        path: impl AsRef<Path>,
+        options: CreateOptions,
+        mode: u32,
+    ) -> Result<Self> {
         format::check_page_size(options.page_size)?;
         format::check_max_depth(options.max_depth)?;
         let path = path.as_ref();
@@ -105,6 +119,7 @@ impl Database {
             .read(true)
             .write(true)
             .create_new(true)
+            .mode(mode)
             .open(path)?;
         Self::initialize(file, options).inspect_err(|_| {
             // Don't leave a half-written file behind.
@@ -128,6 +143,7 @@ impl Database {
             },
             directory: vec![2],
             sync: true,
+            poisoned: false,
         };
         let mut page0 = db.header.encode().to_vec();
         page0.resize(options.page_size as usize, 0);
@@ -198,6 +214,7 @@ impl Database {
             header,
             directory,
             sync: true,
+            poisoned: false,
         })
     }
 
@@ -271,12 +288,19 @@ impl Database {
     }
 
     /// Inserts or replaces `key`. Returns the previous value, if any.
+    ///
+    /// If this fails for any reason but [`Error::TooLarge`], the handle
+    /// refuses further mutations with [`Error::Poisoned`].
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<Option<Vec<u8>>> {
         let size = key.len() + value.len();
         let max = format::max_payload(self.header.page_size);
         if size > max {
             return Err(Error::TooLarge { size, max });
         }
+        self.mutate(|db| db.put_record(key, value))
+    }
+
+    fn put_record(&mut self, key: &[u8], value: &[u8]) -> Result<Option<Vec<u8>>> {
         let hash = key_hash(key);
         loop {
             let mut chain = self.load_chain(self.bucket_page(hash))?;
@@ -301,12 +325,13 @@ impl Database {
                             key: key.to_vec(),
                             value: value.to_vec(),
                         });
-                        self.header.entry_count += 1;
                         None
                     }
                 };
                 self.store_chain(chain.pages, chain.local_depth, chain.records)?;
-                self.commit()?;
+                if old.is_none() {
+                    self.header.entry_count += 1;
+                }
                 return Ok(old);
             }
             self.split(chain, hash)?;
@@ -317,6 +342,9 @@ impl Database {
     ///
     /// Buckets are never merged and the directory never shrinks. Overflow
     /// pages that become unnecessary go on the free list for reuse.
+    ///
+    /// If this fails, the handle refuses further mutations with
+    /// [`Error::Poisoned`].
     pub fn delete(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let hash = key_hash(key);
         let mut chain = self.load_chain(self.bucket_page(hash))?;
@@ -327,11 +355,12 @@ impl Database {
         else {
             return Ok(None);
         };
-        let removed = chain.records.swap_remove(pos);
-        self.store_chain(chain.pages, chain.local_depth, chain.records)?;
-        self.header.entry_count -= 1;
-        self.commit()?;
-        Ok(Some(removed.value))
+        self.mutate(|db| {
+            let removed = chain.records.swap_remove(pos);
+            db.store_chain(chain.pages, chain.local_depth, chain.records)?;
+            db.header.entry_count -= 1;
+            Ok(Some(removed.value))
+        })
     }
 
     /// The first key in iteration order, or `None` if the database is empty.
@@ -695,6 +724,18 @@ impl Database {
 
     fn write_header(&self) -> Result<()> {
         Ok(self.pager.write_at(0, 0, &self.header.encode())?)
+    }
+
+    /// Runs `op` as one mutation and commits it. A failure part way leaves
+    /// the header and directory in memory out of step with the file, so it
+    /// poisons the handle rather than let a later commit record them.
+    fn mutate<T>(&mut self, op: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        if self.poisoned {
+            return Err(Error::Poisoned);
+        }
+        let result = op(self).and_then(|v| self.commit().map(|()| v));
+        self.poisoned = result.is_err();
+        result
     }
 
     /// Ends a mutation: records the header, then flushes if syncing.

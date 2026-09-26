@@ -13,7 +13,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::db::Database;
+use crate::db::{CreateOptions, Database};
 use crate::error::{Error, Result};
 
 /// Rebuilds the database at `path` in place.
@@ -25,16 +25,7 @@ pub fn reorganise(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
     let old = Database::open_read_only(path)?;
     let temp = temp_path(path)?;
-    let new = Database::create(&temp, old.options()).map_err(|e| match e {
-        Error::Io(io) if io.kind() == std::io::ErrorKind::AlreadyExists => {
-            Error::InvalidOption(format!(
-                "{} exists: another reorganise is running, or one was interrupted \
-                 (if so, remove it and retry)",
-                temp.display()
-            ))
-        }
-        e => e,
-    })?;
+    let new = create_temp(&temp, old.options())?;
 
     // From here on the temporary file is ours to clean up.
     let result = copy_into(&old, new).and_then(|()| {
@@ -46,6 +37,22 @@ pub fn reorganise(path: impl AsRef<Path>) -> Result<()> {
         let _ = fs::remove_file(&temp);
     }
     result
+}
+
+/// Creates the temporary database, owner-only until the copy is complete
+/// and given the original's permissions, so that a private database is
+/// never readable by others.
+fn create_temp(temp: &Path, options: CreateOptions) -> Result<Database> {
+    Database::create_with_mode(temp, options, 0o600).map_err(|e| match e {
+        Error::Io(io) if io.kind() == std::io::ErrorKind::AlreadyExists => {
+            Error::InvalidOption(format!(
+                "{} exists: another reorganise is running, or one was interrupted \
+                 (if so, remove it and retry)",
+                temp.display()
+            ))
+        }
+        e => e,
+    })
 }
 
 /// `dir/.name.reorganise`: hidden, and in the same directory as `path`.
@@ -86,4 +93,20 @@ fn sync_parent(path: &Path) -> Result<()> {
     };
     fs::File::open(parent)?.sync_all()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn temp_file_is_created_owner_only() {
+        let temp = std::env::temp_dir().join(format!(".rdbm-temp-mode-{}", std::process::id()));
+        let _ = fs::remove_file(&temp);
+        drop(create_temp(&temp, CreateOptions::default()).unwrap());
+        let mode = fs::metadata(&temp).unwrap().permissions().mode();
+        fs::remove_file(&temp).unwrap();
+        assert_eq!(mode & 0o077, 0, "temp file mode is {mode:o}");
+    }
 }

@@ -292,6 +292,33 @@ fn read_only_handle_rejects_writes() {
 }
 
 #[test]
+fn failed_put_leaves_len_unchanged_and_poisons_the_handle() {
+    let tmp = TempPath::new("poisoned.db");
+    let mut db = Database::create(tmp.path(), CreateOptions::default()).unwrap();
+    db.put(b"a", b"1").unwrap();
+    drop(db);
+
+    let mut db = Database::open_read_only(tmp.path()).unwrap();
+    assert!(matches!(db.put(b"k", b"v"), Err(Error::Io(_))));
+    assert_eq!(db.len(), 1);
+    assert!(matches!(db.put(b"k", b"v"), Err(Error::Poisoned)));
+    assert!(matches!(db.delete(b"a"), Err(Error::Poisoned)));
+    assert_eq!(db.get(b"a").unwrap(), Some(b"1".to_vec()));
+}
+
+#[test]
+fn too_large_put_does_not_poison_the_handle() {
+    let tmp = TempPath::new("toolarge-ok.db");
+    let mut db = Database::create(tmp.path(), small_pages(24)).unwrap();
+    assert!(matches!(
+        db.put(b"k", &[0; 600]),
+        Err(Error::TooLarge { .. })
+    ));
+    db.put(b"k", b"v").unwrap();
+    assert_eq!(db.len(), 1);
+}
+
+#[test]
 fn stats_report_file_size_and_fill() {
     let tmp = TempPath::new("stats.db");
     let db = populated(&tmp, CreateOptions::default(), 2000);

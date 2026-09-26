@@ -516,7 +516,8 @@ buckets, global depth 1, and 16 KiB.
 
 1. Open the original read-only.
 2. Create `.NAME.reorganise` in the same directory, with the same page size
-   and max depth. It must not already exist.
+   and max depth. It must not already exist. It is created readable only by
+   its owner, so a private database is never exposed while it is copied.
 3. Insert every record from `entries()`, with per-write sync off.
 4. Check that the number of records read and the new database's count both
    equal the original's header count. If not, fail, pointing the user to
@@ -561,6 +562,16 @@ Measured on macOS, where `sync_data` does a full flush to the physical disk
 Neither mode is crash-atomic. A crash in the middle of a multi-page write,
 such as a split, can leave the file inconsistent. `check` detects most such
 damage, but nothing repairs it yet.
+
+**Failed writes.** A `put` or `delete` that fails part way, for example on a
+full disk, can leave some of its pages written, just as a crash would, and
+leaves the header and directory in memory out of step with the file. The
+entry count changes only once the bucket is stored, so `len` still reports
+the last value written. To stop a later commit from recording the rest, the
+handle is poisoned: every further `put` or `delete` returns
+`Error::Poisoned`. Reads still work. Reopen the file and run `check` before
+writing again. A `put` rejected with `Error::TooLarge` writes nothing and
+does not poison the handle.
 
 ### Consistency check
 
@@ -622,6 +633,10 @@ key=$(rdbm firstkey db) && while :; do
     echo "$key"; key=$(rdbm nextkey db "$key") || break
 done
 ```
+
+Arguments are taken as raw bytes, so keys, values, and file names need not
+be UTF-8. They cannot contain a NUL byte, because the operating system
+passes arguments as C strings.
 
 Read-only commands open the file read-only. If the reader closes the pipe,
 as in `rdbm list db | head`, rdbm exits quietly. A usage error prints the
