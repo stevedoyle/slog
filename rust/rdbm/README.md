@@ -74,7 +74,7 @@ By default, pages are 4096 bytes and the directory grows to at most 2^24 slots. 
 - **Extendible hashing.** A directory of `2^global_depth` slots maps the top bits of a key's hash to a bucket. A full bucket splits on its own, and the directory doubles only when needed, so the table never rehashes everything at once.
 - **Single-file format.** The file holds a header page, the directory pages, and then bucket, overflow, and free pages. Records within a page are located through a slot array.
 - **Iteration.** Keys come back in a fixed order, sorted by hash and then key bytes, so `nextkey` stays correct even when keys are deleted, inserted, or buckets split during a walk.
-- **Reorganise.** Deletes never merge buckets or shrink the file. `reorganise` copies every record into a fresh file and atomically renames it over the original.
+- **Reorganise.** Deletes never merge buckets or shrink the file. `reorganise` copies every record into a fresh file and atomically renames it over the original, keeping its owner, group, and permissions. Given a symlink, it rebuilds the file the link points to.
 - **Locking.** Every open handle holds an `flock` lock, shared for readers and exclusive for writers and `reorganise`. A conflicting open fails with `Error::Locked`, or waits if asked to.
 - **Hashing.** Keys are hashed with FNV-1a followed by MurmurHash3's `fmix64` finalizer. The finalizer spreads every input bit into the top bits that the directory uses.
 
