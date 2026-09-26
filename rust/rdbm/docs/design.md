@@ -59,6 +59,7 @@ rdbm/
 │   ├── iteration.rs            # first_key/next_key, mutation mid-iteration
 │   ├── reorganise.rs           # shrinking, failure handling
 │   ├── locking.rs              # shared and exclusive locks, waiting
+│   ├── ownership.rs            # reorganise keeps the group
 │   ├── cli.rs                  # runs the `rdbm` binary
 │   └── support/mod.rs          # temporary file helper
 └── examples/
@@ -543,21 +544,38 @@ buckets, global depth 1, and 16 KiB.
 
 **How it works.**
 
-1. Open the original read-only.
-2. Create `.NAME.reorganise` in the same directory, with the same page size
+1. Resolve the path. If it is a symlink, the file it points to is rebuilt
+   and the link is left alone; renaming over the link itself would replace
+   it with a regular file and leave its target stale.
+2. Open the original read-only, under an exclusive lock.
+3. Create `.NAME.reorganise` in the same directory, with the same page size
    and max depth. It must not already exist. It is created readable only by
    its owner, so a private database is never exposed while it is copied.
-3. Insert every record from `entries()`, with per-write sync off.
-4. Check that the number of records read and the new database's count both
+4. Give it the original's owner and group, if they differ. Otherwise a
+   reorganise run by another user, such as root, would leave the database
+   owned by that user, and a file created in a directory with a different
+   group would take that group. If this is not allowed, fail before
+   copying anything: an ordinary user can only give a file their own user
+   ID and a group they belong to.
+5. Insert every record from `entries()`, with per-write sync off.
+6. Check that the number of records read and the new database's count both
    equal the original's header count. If not, fail, pointing the user to
    `rdbm check`.
-5. Sync the new file and copy the original's permission bits onto it.
-6. `rename` it over the original, then sync the parent directory so the
+7. Sync the new file and copy the original's permission bits onto it. This
+   comes after the change of owner, which may clear the set-user-ID and
+   set-group-ID bits.
+8. `rename` it over the original, then sync the parent directory so the
    rename itself is durable.
 
-On any failure the temporary file is removed and the original is unchanged.
-If the temporary file already exists, reorganise fails without touching it:
-another reorganise may be running, or an earlier one was interrupted.
+On any failure up to and including the rename, the temporary file is
+removed and the original is unchanged. If the temporary file already
+exists, reorganise fails without touching it: another reorganise may be
+running, or an earlier one was interrupted.
+
+Only syncing the parent directory can fail after the rename. By then the
+database has been replaced, so the error says so: the database was
+reorganised, but a crash could bring back the old file, which is still a
+complete database.
 
 **Crash safety.** The original is never modified. Until the rename, it is
 intact; after the rename, the new file is complete and synced. `rename` is
@@ -1009,6 +1027,14 @@ Integration tests in `tests/reorganise.rs` cover:
 - reorganising twice produces byte-identical files
 - an emptied database rebuilds to the minimum 3 pages
 - file permissions preserved
+- a symlink: its target is rebuilt, and the link stays a link
+- a directory that allows the rename but cannot be opened to flush it: the
+  error says the database was reorganised, and no temporary file is left
+
+`tests/ownership.rs` changes a database's group to another group the user
+belongs to, and checks that reorganise keeps it. Changing the owner needs
+root, but goes through the same `chown`. The test runs `id -G`, so it is
+in a test binary of its own, away from tests that hold locks.
 - a header whose entry count disagrees with the buckets: `Error::Corrupt`,
   with the original byte-identical and no temporary file left
 - an existing temporary file left untouched

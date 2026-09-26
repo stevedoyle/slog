@@ -15,17 +15,26 @@
 //! to the replaced file.
 
 use std::fs;
+use std::io;
+use std::os::unix::fs::{MetadataExt, chown};
 use std::path::{Path, PathBuf};
 
 use crate::db::{CreateOptions, Database};
 use crate::error::{Error, Result};
 
-/// Rebuilds the database at `path` in place.
+/// Rebuilds the database at `path` in place, keeping its owner, group, and
+/// permission bits. If `path` is a symlink, the file it points to is
+/// rebuilt and the link is left alone.
 ///
 /// Fails, leaving the original unchanged, if the database cannot be read,
 /// if any other handle has it open ([`Error::Locked`]), if the temporary
-/// file already exists, or if the copy does not hold exactly the original's
+/// file already exists, if the rebuilt file cannot be given the original's
+/// owner and group, or if the copy does not hold exactly the original's
 /// records.
+///
+/// One failure comes after the original has been replaced: if the
+/// directory cannot be flushed, the error says the database was
+/// reorganised, but a crash could still bring back the old file.
 pub fn reorganise(path: impl AsRef<Path>) -> Result<()> {
     reorganise_with(path, false)
 }
@@ -33,22 +42,60 @@ pub fn reorganise(path: impl AsRef<Path>) -> Result<()> {
 /// Like [`reorganise`], but if `wait` is set and another handle has the
 /// database open, waits for it to be closed instead of failing.
 pub fn reorganise_with(path: impl AsRef<Path>, wait: bool) -> Result<()> {
-    let path = path.as_ref();
+    // Renaming over a symlink would replace the link with a regular file
+    // and leave its target stale, so work on the file it points to.
+    let path = &fs::canonicalize(path.as_ref())?;
     // Held until the function returns, which is after the rename.
     let old = Database::open_read_only_exclusive(path, wait)?;
+    let original = fs::metadata(path)?;
     let temp = temp_path(path)?;
     let new = create_temp(&temp, old.options())?;
 
-    // From here on the temporary file is ours to clean up.
-    let result = copy_into(&old, new).and_then(|()| {
-        fs::set_permissions(&temp, fs::metadata(path)?.permissions())?;
-        fs::rename(&temp, path)?;
-        sync_parent(path)
-    });
-    if result.is_err() {
+    // Until the rename, the original is unchanged and the temporary file is
+    // ours to clean up. Ownership comes first, so that a copy which could not
+    // take the original's place is never made.
+    let replaced = keep_owner(&temp, &original)
+        .and_then(|()| copy_into(&old, new))
+        .and_then(|()| {
+            // After the chown, which may clear the set-user-ID and set-group-ID bits.
+            fs::set_permissions(&temp, original.permissions())?;
+            fs::rename(&temp, path)?;
+            Ok(())
+        });
+    if replaced.is_err() {
         let _ = fs::remove_file(&temp);
+        return replaced;
     }
-    result
+    sync_parent(path).map_err(|e| {
+        Error::Io(io::Error::new(
+            e.kind(),
+            format!(
+                "the database was reorganised, but flushing its directory failed, \
+                 so a crash could bring back the old file: {e}"
+            ),
+        ))
+    })
+}
+
+/// Gives the temporary file the original's owner and group. Otherwise a
+/// reorganise run by another user, such as root, would leave the database
+/// owned by that user, and a file created in a directory with a different
+/// group would take that group.
+fn keep_owner(temp: &Path, original: &fs::Metadata) -> Result<()> {
+    let created = fs::metadata(temp)?;
+    let owner = (original.uid(), original.gid());
+    if (created.uid(), created.gid()) == owner {
+        return Ok(());
+    }
+    chown(temp, Some(owner.0), Some(owner.1)).map_err(|e| {
+        Error::Io(io::Error::new(
+            e.kind(),
+            format!(
+                "cannot give the rebuilt file the original's owner {} and group {}: {e}",
+                owner.0, owner.1
+            ),
+        ))
+    })
 }
 
 /// Creates the temporary database, owner-only until the copy is complete
@@ -98,13 +145,12 @@ fn copy_into(old: &Database, mut new: Database) -> Result<()> {
 }
 
 /// Flushes the rename itself, which lives in the parent directory.
-fn sync_parent(path: &Path) -> Result<()> {
+fn sync_parent(path: &Path) -> io::Result<()> {
     let parent = match path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
     };
-    fs::File::open(parent)?.sync_all()?;
-    Ok(())
+    fs::File::open(parent)?.sync_all()
 }
 
 #[cfg(test)]

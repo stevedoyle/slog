@@ -182,3 +182,53 @@ fn missing_database_is_an_error() {
     assert!(matches!(reorganise(tmp.path()), Err(Error::Io(_))));
     assert!(!temp_file_for(tmp.path()).exists());
 }
+
+#[test]
+fn reorganises_the_target_of_a_symlink_and_keeps_the_link() {
+    let tmp = TempPath::new("target.db");
+    let link = TempPath::new("link.db");
+    fragmented(&tmp, CreateOptions::default(), 400, 360);
+    std::os::unix::fs::symlink(tmp.path(), link.path()).unwrap();
+    let size_before = file_size(tmp.path());
+
+    reorganise(link.path()).unwrap();
+    assert!(fs::symlink_metadata(link.path()).unwrap().is_symlink());
+    assert!(file_size(tmp.path()) < size_before);
+    let db = Database::open_read_only(link.path()).unwrap();
+    assert_eq!(db.len(), 40);
+    assert_eq!(db.get(&key(399)).unwrap(), Some(value(399)));
+    assert!(!temp_file_for(link.path()).exists());
+    assert!(!temp_file_for(tmp.path()).exists());
+}
+
+#[test]
+fn a_failed_directory_flush_after_the_rename_says_the_reorganise_happened() {
+    // With write and search permission but not read, the directory allows
+    // the rename but cannot be opened to flush it.
+    let dir = TempPath::new("unreadable-dir");
+    fs::create_dir(dir.path()).unwrap();
+    let db_path = dir.path().join("db");
+    {
+        let mut db = Database::create(&db_path, CreateOptions::default()).unwrap();
+        db.put(b"k", b"v").unwrap();
+    }
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o300)).unwrap();
+    let unreadable = fs::read_dir(dir.path()).is_err();
+    let result = reorganise(&db_path);
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let temp_left = temp_file_for(&db_path).exists();
+    let db = Database::open_read_only(&db_path).unwrap();
+    let value = db.get(b"k").unwrap();
+    drop(db);
+    fs::remove_dir_all(dir.path()).unwrap();
+
+    if !unreadable {
+        eprintln!("skipped: running as a user who can read any directory");
+        return;
+    }
+    let err = result.unwrap_err();
+    assert!(matches!(err, Error::Io(_)), "{err}");
+    assert!(err.to_string().contains("was reorganised"), "{err}");
+    assert!(!temp_left);
+    assert_eq!(value, Some(b"v".to_vec()));
+}
