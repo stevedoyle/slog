@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -16 792 502" width="792" height="502" role="img" aria-label="Module dependency diagram: main.rs calls reorganise.rs and Database in db.rs; Database uses format.rs for encoding, pager.rs for page I/O and hash.rs for hashing; pager.rs is the only module that reads and writes the database file, apart from reorganise renaming a rebuilt file over it. HashTable in hashtable.rs is an in-memory version that shares hash.rs.">
+  <title>Module dependency diagram: main.rs calls reorganise.rs and Database in db.rs; Database uses format.rs for encoding, pager.rs for page I/O and hash.rs for hashing; pager.rs is the only module that reads and writes the database file, apart from reorganise renaming a rebuilt file over it. HashTable in hashtable.rs is an in-memory version that shares hash.rs.</title>
+  <style>
+  text { font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .title { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; font-weight: 600; }
+  .small { font-size: 11px; }
+  .lbl { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11px; }
+  .box, .bucket { stroke-width: 1.3; }
+  .meta { stroke-width: 1.2; }
+  .free { fill: none; stroke-width: 1.2; stroke-dasharray: 4 3; }
+  .io, .ioedge { stroke-width: 1.4; }
+  .hotbox, .hot { stroke-width: 2; }
+  .edge, .thin, .hot, .ioedge, .zoom { fill: none; }
+  .edge { stroke-width: 1.3; }
+  .thin, .zoom { stroke-width: 1; }
+  .dash { stroke-dasharray: 5 4; }
+  .zoom { stroke-dasharray: 3 3; }
+  .acc { font-weight: 600; }
+  svg { color: #1b2320; }
+  .bg { fill: #f5f6f3; }
+  text { fill: #1b2320; }
+  .small, .lbl, .mut-t { fill: #5c6862; }
+  .box { fill: #ffffff; stroke: #1b2320; }
+  .meta { fill: #e9ece6; stroke: #1b2320; }
+  .bucket, .hotbox { fill: #dcefeb; stroke: #0e6f68; }
+  .free { stroke: #5c6862; }
+  .io { fill: #f6ead8; stroke: #a8671a; }
+  .edge { stroke: #1b2320; }
+  .thin { stroke: #5c6862; }
+  .hot { stroke: #0e6f68; }
+  .ioedge { stroke: #a8671a; }
+  .zoom { stroke: #cfd5ce; }
+  text.acc, tspan.acc, text.acc-t { fill: #0e6f68; }
+  text.iot { fill: #a8671a; }
+  .mk { fill: #1b2320; }
+  .mk-hot { fill: #0e6f68; }
+  .mk-io { fill: #a8671a; }
+  .mk-muted { fill: #5c6862; }
+  @media (prefers-color-scheme: dark) {
+  svg { color: #e1e7e3; }
+  .bg { fill: #111614; }
+  text { fill: #e1e7e3; }
+  .small, .lbl, .mut-t { fill: #97a39d; }
+  .box { fill: #182019; stroke: #e1e7e3; }
+  .meta { fill: #212a25; stroke: #e1e7e3; }
+  .bucket, .hotbox { fill: #173532; stroke: #5cc4b6; }
+  .free { stroke: #97a39d; }
+  .io { fill: #33271a; stroke: #e3a650; }
+  .edge { stroke: #e1e7e3; }
+  .thin { stroke: #97a39d; }
+  .hot { stroke: #5cc4b6; }
+  .ioedge { stroke: #e3a650; }
+  .zoom { stroke: #34403a; }
+  text.acc, tspan.acc, text.acc-t { fill: #5cc4b6; }
+  text.iot { fill: #e3a650; }
+  .mk { fill: #e1e7e3; }
+  .mk-hot { fill: #5cc4b6; }
+  .mk-io { fill: #e3a650; }
+  .mk-muted { fill: #97a39d; }
+  }
+</style>
+  <rect class="bg" x="-16" y="-16" width="792" height="502" rx="8"/>
+          <defs>
+            <marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="m1io" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-io" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <!-- row A: front ends -->
+          <rect class="box" x="40" y="24" width="300" height="52" rx="4"/>
+          <text class="title" x="56" y="46">main.rs</text>
+          <text class="small" x="56" y="64">rdbm CLI: args → library → stdout, exit code</text>
+
+          <rect class="box" x="460" y="24" width="280" height="52" rx="4"/>
+          <text class="title" x="476" y="46">examples/hashtable.rs</text>
+          <text class="small" x="476" y="64">stdin commands → HashTable</text>
+
+          <!-- row B: engines -->
+          <rect class="box" x="40" y="140" width="160" height="64" rx="4"/>
+          <text class="title" x="56" y="164">reorganise.rs</text>
+          <text class="small" x="56" y="182">rebuild into a temp</text>
+          <text class="small" x="56" y="196">file, then rename</text>
+
+          <rect class="hotbox" x="250" y="124" width="300" height="92" rx="4"/>
+          <text class="title" x="266" y="146">db.rs · Database</text>
+          <text class="mono" x="266" y="166">header: Header</text>
+          <text class="mono" x="266" y="184">directory: Vec&lt;u64&gt;</text>
+          <text class="small" x="266" y="204">directory cached in memory; buckets never</text>
+
+          <rect class="box" x="600" y="140" width="140" height="64" rx="4"/>
+          <text class="title" x="616" y="164">hashtable.rs</text>
+          <text class="small" x="616" y="182">same algorithm,</text>
+          <text class="small" x="616" y="196">in memory, no I/O</text>
+
+          <!-- row C: building blocks -->
+          <rect class="box" x="40" y="290" width="200" height="64" rx="4"/>
+          <text class="title" x="56" y="314">format.rs</text>
+          <text class="small" x="56" y="332">bytes ⇄ Header, Page, dir</text>
+          <text class="small" x="56" y="346">pure, no I/O</text>
+
+          <rect class="io" x="280" y="290" width="200" height="64" rx="4"/>
+          <text class="title" x="296" y="314">pager.rs</text>
+          <text class="small" x="296" y="332">positioned whole-page I/O</text>
+          <text class="small" x="296" y="346">no cache, no interpretation</text>
+
+          <rect class="box" x="520" y="290" width="220" height="64" rx="4"/>
+          <text class="title" x="536" y="314">hash.rs</text>
+          <text class="small" x="536" y="332">fnv1a → fmix64</text>
+          <text class="small" x="536" y="346">prefix(h, d), bit(h, d): top bits</text>
+
+          <!-- row D: the file -->
+          <rect class="io" x="280" y="400" width="200" height="48" rx="4"/>
+          <text class="title" x="296" y="421">FILE</text>
+          <text class="small" x="296" y="438">one file, page_count × page_size</text>
+
+          <!-- edges -->
+          <line class="edge" x1="120" y1="76" x2="120" y2="138" marker-end="url(#m1)"/>
+          <text class="lbl" x="128" y="112">reorganise(path)</text>
+
+          <line class="edge" x1="320" y1="76" x2="320" y2="122" marker-end="url(#m1)"/>
+          <text class="lbl" x="328" y="104">open · get · put · …</text>
+
+          <line class="edge" x1="670" y1="76" x2="670" y2="138" marker-end="url(#m1)"/>
+          <text class="lbl" x="662" y="112" text-anchor="end">put · get · delete</text>
+
+          <line class="edge" x1="200" y1="172" x2="248" y2="172" marker-end="url(#m1)"/>
+          <text class="lbl" x="224" y="164" text-anchor="middle">copies</text>
+
+          <line class="edge" x1="280" y1="216" x2="162" y2="288" marker-end="url(#m1)"/>
+          <text class="lbl" x="212" y="248" text-anchor="end">encode / decode</text>
+
+          <line class="edge" x1="380" y1="216" x2="380" y2="288" marker-end="url(#m1)"/>
+          <text class="lbl" x="388" y="244">read_page / write_page</text>
+
+          <line class="edge" x1="520" y1="216" x2="598" y2="288" marker-end="url(#m1)"/>
+          <text class="lbl" x="562" y="270" text-anchor="end">key_hash, prefix</text>
+
+          <line class="edge" x1="670" y1="204" x2="670" y2="288" marker-end="url(#m1)"/>
+          <text class="lbl" x="678" y="250">same hash</text>
+
+          <line class="ioedge" x1="380" y1="354" x2="380" y2="398" marker-end="url(#m1io)"/>
+          <text class="lbl iot" x="388" y="381">pread · pwrite · fsync</text>
+
+          <path class="ioedge dash" d="M40,190 H22 V424 H278" marker-end="url(#m1io)"/>
+          <text class="lbl iot" x="150" y="416" text-anchor="middle">rename temp → FILE</text>
+        </svg>

@@ -77,6 +77,11 @@ main.rs ──► db.rs ──► format.rs   (bytes ⇄ structs, no I/O)
 hashtable.rs ───────► hash.rs
 ```
 
+![Module dependencies: main.rs calls reorganise.rs and Database; Database uses format.rs, pager.rs and hash.rs; only pager.rs reads and writes the file, apart from reorganise renaming a rebuilt file over it](assets/modules.svg)
+
+The same dependencies as a drawing. Orange marks the only code that touches
+the file.
+
 `HashTable` is the in-memory form of the same algorithm. It has no I/O, so it
 is the clearest statement of the algorithm and a reference for the disk
 version.
@@ -308,6 +313,12 @@ A new database has 3 pages: the header, a one-slot directory, and one empty
 bucket. The file length is always exactly `page_count × page_size`, and
 opening a file whose length disagrees fails.
 
+![An eight-page file: the header points to the free list; the directory maps slots to bucket pages; one bucket has an overflow page; a bucket page expanded to show its header, slots growing forward, and records packed from the end](assets/file-layout.svg)
+
+An eight-page file with max depth 2. Bucket page 5 is at the max depth, so
+it has grown an overflow page instead of splitting. Pages 4 and 7 form the
+free list.
+
 #### Header
 
 The first 56 bytes of page 0. The rest of the page is zero.
@@ -405,6 +416,8 @@ the free list first, then from the end of the file.
 The directory is read into memory when the database is opened and is written
 through on every change. Bucket pages are never cached.
 
+![Lookup of key1: key_hash gives a hash whose top 3 bits, 110, select directory slot 6, which points to bucket page 6; an overflow page is read only if the key is not found](assets/lookup-path.svg)
+
 - **get** reads the key's bucket page. It follows overflow pages only if the
   key is not found and the chain continues. Without overflow, a lookup is one
   page read.
@@ -418,6 +431,8 @@ through on every change. Bucket pages are never cached.
 A split writes, in this order: the directory, if it doubled; the new bucket;
 the directory slots that now point at it; and the old bucket without the
 moved records.
+
+![The put loop: load the chain; if the records fit in one page, store the chain and commit; otherwise split and retry if the bucket can split, or add an overflow page if it cannot](assets/put-loop.svg)
 
 When the doubled directory no longer fits in its pages, it is written to new
 pages at the end of the file, the header is updated to point at it, and the
