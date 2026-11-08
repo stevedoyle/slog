@@ -15,3 +15,7 @@ SHAKE XOF experiment to check on usage of squeeze functions.
 A dbm-style key-value store built on extendible hashing and stored in a single paged file, with a `gdbmtool`-like CLI.
 
 - [rdbm](./rdbm/)
+
+A bounded, thread-safe, multi-producer/multi-consumer queue that moves values instead of copying them.
+
+- [pcq](./pcq/)
